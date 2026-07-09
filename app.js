@@ -1,4 +1,4 @@
-﻿// MyPitchGym - Frontend Application Logic (Realtime API voice)
+// MyPitchGym - Frontend Application Logic (Realtime API voice)
 
 const App = {
   state: {

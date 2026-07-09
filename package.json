@@ -1,10 +1,1 @@
-﻿{
-    "name":  "mypitchgym",
-    "version":  "1.0.0",
-    "description":  "Practice any sales pitch against an AI buyer that talks back",
-    "private":  true,
-    "dependencies":  {
-                         "openai":  "^4.77.0",
-                         "stripe":  "^14.10.0"
-                     }
-}
+{"name":"mypitchgym","version":"1.0.0","description":"Practice any sales pitch against an AI buyer that talks back","private":true,"dependencies":{"openai":"^4.77.0","stripe":"^14.10.0"}}

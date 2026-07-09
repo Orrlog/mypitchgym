@@ -1,4 +1,4 @@
-﻿// MyPitchGym - Landing Page Demo Call (Realtime API)
+// MyPitchGym - Landing Page Demo Call (Realtime API)
 
 const Demo = {
   state: {

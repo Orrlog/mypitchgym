@@ -1,12 +1,11 @@
-{
+﻿{
   "cleanUrls": true,
   "rewrites": [
     { "source": "/app", "destination": "/app.html" }
   ],
   "functions": {
     "api/*.js": {
-      "memory": 1024,
-      "maxDuration": 30
+      "maxDuration": 60
     }
   }
 }

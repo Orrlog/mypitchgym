@@ -25,8 +25,8 @@ const CUSTOMER_TYPES = {
 
 const SALES_CHANNELS = {
   'phone': 'PHONE CALL - The prospect is on a phone call. They did not expect to see the salesperson in person. They can hang up at any time.',
-  'in_person': 'IN PERSON - The salesperson walked into the prospect''s business unannounced. The prospect is busy, may be with customers, but feels social pressure to be polite.',
-  'door': 'DOOR-TO-DOOR - The salesperson knocked on the prospect''s door at their home. The prospect is surprised, defensive, and suspicious. High chance of being turned away immediately.'
+  "in_person": "IN PERSON - The salesperson walked into the prospect's business unannounced. The prospect is busy, may be with customers, but feels social pressure to be polite.",
+  'door': "DOOR-TO-DOOR - The salesperson knocked on the prospect's door at their home. The prospect is surprised, defensive, and suspicious. High chance of being turned away immediately."
 };
 const COMMON_OBJECTIONS = [
   'I need to think about it',

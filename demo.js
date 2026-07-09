@@ -1,4 +1,6 @@
 // MyPitchGym - Landing Page Demo Call
+// Uses silence detection (VAD) so the user can talk naturally -
+// the AI responds when the user stops talking, not on a fixed timer.
 
 const Demo = {
   state: {
@@ -10,14 +12,24 @@ const Demo = {
     audioChunks: [],
     localStream: null,
     isProcessing: false,
-    aiAudio: null
+    aiAudio: null,
+    audioContext: null,
+    analyser: null,
+    vadInterval: null,
+    silenceStart: null,
+    isRecording: false,
+    minSpeechMs: 800,
+    silenceThreshold: 1500,
+    noiseFloor: 8,
+    hasSpeech: false
   },
 
+  // A product most people understand: home security systems
   demoProduct: {
-    product_name: "Solar panel installations for homeowners",
-    price_range: "15k-25k",
-    benefits: ["Cuts electric bill 60-80%", "25-year warranty", "0% financing", "Increases home value"],
-    objections: "Too expensive, I need to think about it, not sure it works in my area",
+    product_name: "Smart home security system with 24/7 professional monitoring",
+    price_range: "$49/mo monitoring + $199 setup",
+    benefits: ["24/7 professional monitoring", "Mobile app alerts anywhere", "No long-term contract", "Smart doorbell camera included"],
+    objections: "Too expensive, I already have cameras, I need to think about it",
     customer_type: "skeptic",
     difficulty: "beginner",
     sales_channel: "phone"
@@ -56,7 +68,6 @@ const Demo = {
     this.state.callActive = true;
     this.state.isProcessing = false;
 
-    // Reset UI
     document.getElementById("demoChat").innerHTML = "";
     document.getElementById("demoChat").style.display = "";
     document.getElementById("demoStartBtn").textContent = "End Call";
@@ -71,7 +82,6 @@ const Demo = {
     this.setStatus("Requesting microphone...");
     this.startTimer();
 
-    // Get microphone
     try {
       this.state.localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
     } catch (err) {
@@ -81,7 +91,9 @@ const Demo = {
       return;
     }
 
-    // Prospect greets first
+    // Set up audio analyser for VAD
+    this.setupVAD();
+
     this.setStatus("Calling...");
     setTimeout(() => {
       if (!this.state.callActive) return;
@@ -89,8 +101,31 @@ const Demo = {
     }, 800);
   },
 
+  setupVAD() {
+    try {
+      this.state.audioContext = new (window.AudioContext || window.webkitAudioContext)();
+      const source = this.state.audioContext.createMediaStreamSource(this.state.localStream);
+      this.state.analyser = this.state.audioContext.createAnalyser();
+      this.state.analyser.fftSize = 512;
+      this.state.analyser.smoothingTimeConstant = 0.6;
+      source.connect(this.state.analyser);
+    } catch(e) {
+      // VAD won't work, will fall back to timed recording
+    }
+  },
+
+  // Check if there's speech above the noise floor
+  detectSpeech() {
+    if (!this.state.analyser) return false;
+    const data = new Uint8Array(this.state.analyser.frequencyBinCount);
+    this.state.analyser.getByteFrequencyData(data);
+    let sum = 0;
+    for (let i = 0; i < data.length; i++) sum += data[i];
+    const avg = sum / data.length;
+    return avg > this.state.noiseFloor;
+  },
+
   async prospectGreets() {
-    // Send an initial empty message to get the AI to say hello
     this.state.isProcessing = true;
     this.setStatus("Ringing...");
     this.addChatMessage("ai", "...");
@@ -114,7 +149,6 @@ const Demo = {
       if (!response.ok) throw new Error("Failed to connect");
       const result = await response.json();
 
-      // Remove placeholder
       const chat = document.getElementById("demoChat");
       const last = chat.lastElementChild;
       if (last && last.textContent === "...") last.remove();
@@ -123,7 +157,6 @@ const Demo = {
       this.state.transcript.push({ role: "user", content: "Hello, is this the homeowner?" });
       this.state.transcript.push({ role: "assistant", content: result.ai_text });
 
-      // Play the AI audio
       this.playAudio(result.ai_audio);
       this.state.isProcessing = false;
     } catch (err) {
@@ -139,8 +172,7 @@ const Demo = {
   playAudio(base64Audio) {
     if (!base64Audio) { this.startRecording(); return; }
     this.setStatus("AI speaking...");
-    
-    // Stop any existing audio
+
     if (this.state.aiAudio) {
       this.state.aiAudio.pause();
       this.state.aiAudio = null;
@@ -148,13 +180,13 @@ const Demo = {
 
     const audio = new Audio("data:audio/mp3;base64," + base64Audio);
     this.state.aiAudio = audio;
-    
+
     audio.onended = () => {
       this.state.aiAudio = null;
       this.setStatus("Your turn - just talk");
       this.startRecording();
     };
-    
+
     audio.onerror = () => {
       this.state.aiAudio = null;
       this.setStatus("Your turn - just talk");
@@ -169,9 +201,12 @@ const Demo = {
     if (!this.state.localStream) return;
 
     this.state.audioChunks = [];
-    
+    this.state.hasSpeech = false;
+    this.state.silenceStart = null;
+
     const mediaRecorder = new MediaRecorder(this.state.localStream);
     this.state.mediaRecorder = mediaRecorder;
+    this.state.isRecording = true;
 
     mediaRecorder.ondataavailable = (e) => {
       if (e.data.size > 0) this.state.audioChunks.push(e.data);
@@ -180,8 +215,15 @@ const Demo = {
     mediaRecorder.onstop = () => {
       if (!this.state.callActive) return;
       if (this.state.audioChunks.length === 0) return;
-      
-      // Convert to base64 and send
+
+      // If no speech was detected, just restart recording instead of sending silence
+      if (!this.state.hasSpeech) {
+        if (this.state.callActive && !this.state.isProcessing) {
+          setTimeout(() => this.startRecording(), 200);
+        }
+        return;
+      }
+
       const blob = new Blob(this.state.audioChunks, { type: "audio/webm" });
       const reader = new FileReader();
       reader.onloadend = () => {
@@ -192,16 +234,51 @@ const Demo = {
     };
 
     mediaRecorder.start();
-
-    // Record for 3 seconds, then stop and send
-    // If user keeps talking, the silence detection isn't possible without analysis,
-    // so we use a fixed recording window with auto-send
     this.setStatus("Listening...");
-    this.state.recordTimeout = setTimeout(() => {
-      if (this.state.mediaRecorder && this.state.mediaRecorder.state === "recording") {
-        this.state.mediaRecorder.stop();
+
+    // VAD loop: check every 100ms if user is speaking or has gone silent
+    this.state.vadInterval = setInterval(() => {
+      if (!this.state.isRecording || !this.state.callActive) {
+        clearInterval(this.state.vadInterval);
+        return;
       }
-    }, 6000);
+
+      const isSpeaking = this.detectSpeech();
+
+      if (isSpeaking) {
+        this.state.hasSpeech = true;
+        this.state.silenceStart = null;
+      } else {
+        // Silence detected
+        if (this.state.hasSpeech) {
+          // User was speaking, now silent - start counting silence
+          if (!this.state.silenceStart) {
+            this.state.silenceStart = Date.now();
+          } else {
+            const silenceMs = Date.now() - this.state.silenceStart;
+            // If silence has lasted long enough after speech, stop and send
+            if (silenceMs >= this.state.silenceThreshold) {
+              clearInterval(this.state.vadInterval);
+              this.state.isRecording = false;
+              if (this.state.mediaRecorder && this.state.mediaRecorder.state === "recording") {
+                this.state.mediaRecorder.stop();
+              }
+            }
+          }
+        }
+      }
+    }, 100);
+
+    // Safety timeout: if user talks for a very long time (30s), cut them off
+    this.state.recordTimeout = setTimeout(() => {
+      if (this.state.isRecording && this.state.callActive) {
+        clearInterval(this.state.vadInterval);
+        this.state.isRecording = false;
+        if (this.state.mediaRecorder && this.state.mediaRecorder.state === "recording") {
+          this.state.mediaRecorder.stop();
+        }
+      }
+    }, 30000);
   },
 
   async sendAudioToServer(base64Audio) {
@@ -244,7 +321,6 @@ const Demo = {
       this.addChatMessage("system", "Connection issue. Retrying...");
       this.setStatus("Retry...");
       this.state.isProcessing = false;
-      // Auto-retry recording
       setTimeout(() => { if (this.state.callActive) this.startRecording(); }, 1000);
     }
   },
@@ -263,6 +339,7 @@ const Demo = {
   stopTimer() {
     if (this.state.timerInterval) { clearInterval(this.state.timerInterval); this.state.timerInterval = null; }
     if (this.state.recordTimeout) { clearTimeout(this.state.recordTimeout); this.state.recordTimeout = null; }
+    if (this.state.vadInterval) { clearInterval(this.state.vadInterval); this.state.vadInterval = null; }
   },
 
   updateTimerDisplay() {
@@ -279,9 +356,9 @@ const Demo = {
   },
 
   endCall(timedOut) {
-    // Kill EVERYTHING
     this.state.callActive = false;
     this.state.isProcessing = false;
+    this.state.isRecording = false;
     this.stopTimer();
 
     if (this.state.mediaRecorder && this.state.mediaRecorder.state === "recording") {
@@ -295,8 +372,12 @@ const Demo = {
       this.state.aiAudio.pause();
       this.state.aiAudio = null;
     }
+    if (this.state.audioContext) {
+      try { this.state.audioContext.close(); } catch(e) {}
+      this.state.audioContext = null;
+      this.state.analyser = null;
+    }
 
-    // Hide call UI
     document.getElementById("demoStartBtn").style.display = "none";
     document.getElementById("demoChat").style.display = "none";
     document.querySelector(".demo-timer-bar").style.display = "none";
@@ -304,7 +385,6 @@ const Demo = {
     document.querySelector(".demo-header").style.display = "none";
     this.setStatus("");
 
-    // Show upsell
     document.getElementById("demoUpsell").classList.remove("hidden");
   },
 

@@ -15,6 +15,14 @@ const App = {
     audioChunks: [],
     aiAudio: null,
     recordTimeout: null,
+    audioContext: null,
+    analyser: null,
+    vadInterval: null,
+    silenceStart: null,
+    isRecording: false,
+    hasSpeech: false,
+    noiseFloor: 8,
+    silenceThreshold: 1500,
     coachingData: null
   },
 
@@ -151,6 +159,9 @@ const App = {
       return;
     }
 
+    // Set up audio analyser for silence detection
+    this.setupVAD();
+
     this.state.callActive = true;
     this.updateCallStatus("Calling...");
 
@@ -231,6 +242,27 @@ const App = {
     }
   },
 
+  setupVAD() {
+    try {
+      this.state.audioContext = new (window.AudioContext || window.webkitAudioContext)();
+      const source = this.state.audioContext.createMediaStreamSource(this.state.localStream);
+      this.state.analyser = this.state.audioContext.createAnalyser();
+      this.state.analyser.fftSize = 512;
+      this.state.analyser.smoothingTimeConstant = 0.6;
+      source.connect(this.state.analyser);
+    } catch(e) {}
+  },
+
+  detectSpeech() {
+    if (!this.state.analyser) return false;
+    const data = new Uint8Array(this.state.analyser.frequencyBinCount);
+    this.state.analyser.getByteFrequencyData(data);
+    let sum = 0;
+    for (let i = 0; i < data.length; i++) sum += data[i];
+    const avg = sum / data.length;
+    return avg > this.state.noiseFloor;
+  },
+
   playAudio(base64Audio) {
     if (!base64Audio) { this.startRecording(); return; }
     this.updateCallStatus("AI speaking...");
@@ -245,25 +277,77 @@ const App = {
   startRecording() {
     if (!this.state.callActive || this.state.isProcessing) return;
     if (!this.state.localStream) return;
+
     this.state.audioChunks = [];
+    this.state.hasSpeech = false;
+    this.state.silenceStart = null;
+
     const mediaRecorder = new MediaRecorder(this.state.localStream);
     this.state.mediaRecorder = mediaRecorder;
+    this.state.isRecording = true;
+
     mediaRecorder.ondataavailable = (e) => { if (e.data.size > 0) this.state.audioChunks.push(e.data); };
     mediaRecorder.onstop = () => {
       if (!this.state.callActive) return;
       if (this.state.audioChunks.length === 0) return;
+
+      // If no speech was detected, restart instead of sending silence
+      if (!this.state.hasSpeech) {
+        if (this.state.callActive && !this.state.isProcessing) {
+          setTimeout(() => this.startRecording(), 200);
+        }
+        return;
+      }
+
       const blob = new Blob(this.state.audioChunks, { type: "audio/webm" });
       const reader = new FileReader();
       reader.onloadend = () => { const base64 = reader.result.split(",")[1]; this.sendAudioToServer(base64); };
       reader.readAsDataURL(blob);
     };
+
     mediaRecorder.start();
     this.updateCallStatus("Listening...");
-    this.state.recordTimeout = setTimeout(() => {
-      if (this.state.mediaRecorder && this.state.mediaRecorder.state === "recording") {
-        this.state.mediaRecorder.stop();
+
+    // VAD loop: check every 100ms for speech/silence
+    this.state.vadInterval = setInterval(() => {
+      if (!this.state.isRecording || !this.state.callActive) {
+        clearInterval(this.state.vadInterval);
+        return;
       }
-    }, 6000);
+
+      const isSpeaking = this.detectSpeech();
+
+      if (isSpeaking) {
+        this.state.hasSpeech = true;
+        this.state.silenceStart = null;
+      } else {
+        if (this.state.hasSpeech) {
+          if (!this.state.silenceStart) {
+            this.state.silenceStart = Date.now();
+          } else {
+            const silenceMs = Date.now() - this.state.silenceStart;
+            if (silenceMs >= this.state.silenceThreshold) {
+              clearInterval(this.state.vadInterval);
+              this.state.isRecording = false;
+              if (this.state.mediaRecorder && this.state.mediaRecorder.state === "recording") {
+                this.state.mediaRecorder.stop();
+              }
+            }
+          }
+        }
+      }
+    }, 100);
+
+    // Safety: max 30s of talking before cutoff
+    this.state.recordTimeout = setTimeout(() => {
+      if (this.state.isRecording && this.state.callActive) {
+        clearInterval(this.state.vadInterval);
+        this.state.isRecording = false;
+        if (this.state.mediaRecorder && this.state.mediaRecorder.state === "recording") {
+          this.state.mediaRecorder.stop();
+        }
+      }
+    }, 30000);
   },
 
   async sendAudioToServer(base64Audio) {
@@ -307,7 +391,9 @@ const App = {
   endCall() {
     this.state.callActive = false;
     this.state.isProcessing = false;
+    this.state.isRecording = false;
     if (this.state.recordTimeout) { clearTimeout(this.state.recordTimeout); this.state.recordTimeout = null; }
+    if (this.state.vadInterval) { clearInterval(this.state.vadInterval); this.state.vadInterval = null; }
     if (this.state.mediaRecorder && this.state.mediaRecorder.state === "recording") {
       try { this.state.mediaRecorder.stop(); } catch(e) {}
     }
@@ -316,6 +402,11 @@ const App = {
       this.state.localStream = null;
     }
     if (this.state.aiAudio) { this.state.aiAudio.pause(); this.state.aiAudio = null; }
+    if (this.state.audioContext) {
+      try { this.state.audioContext.close(); } catch(e) {}
+      this.state.audioContext = null;
+      this.state.analyser = null;
+    }
     this.updateCallStatus("Call ended");
     if (this.state.transcript.length < 2) {
       this.addChatMessage("system", "Call ended. Not enough conversation for coaching.");
@@ -396,6 +487,7 @@ const App = {
       this.addChatMessage("system", "Mic access denied.");
       return;
     }
+    this.setupVAD();
     this.state.callActive = true;
     setTimeout(() => { if (this.state.callActive) this.prospectGreets(); }, 500);
   },

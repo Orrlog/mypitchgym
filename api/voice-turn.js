@@ -115,9 +115,12 @@ module.exports = async (req, res) => {
 
     const aiText = chatResponse.choices[0].message.content;
 
+    // Use male voice (onyx) for role reversal mode, female-ish (alloy) for prospect mode
+    const ttsVoice = mode === "reversal" ? "onyx" : "alloy";
+
     const ttsResponse = await openai.audio.speech.create({
       model: "tts-1",
-      voice: "alloy",
+      voice: ttsVoice,
       input: aiText,
       response_format: "mp3"
     });

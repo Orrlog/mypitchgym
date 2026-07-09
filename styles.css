@@ -418,3 +418,4 @@ body {
   padding: 4px 0 8px;
   font-style: italic;
 }
+.hidden { display: none !important; }

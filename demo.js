@@ -43,7 +43,6 @@ const Demo = {
     document.getElementById('demoCloseBtn').addEventListener('click', () => this.closeModal());
     document.getElementById('demoStartBtn').addEventListener('click', () => this.toggleCall());
 
-    // Text input fallback - always available during call
     const sendBtn = document.getElementById('demoSendText');
     const textInput = document.getElementById('demoTextInput');
     if (sendBtn) sendBtn.addEventListener('click', () => this.sendText());
@@ -69,7 +68,6 @@ const Demo = {
   },
 
   toggleCall() {
-    // FIX: if call is active, ALWAYS end it - don't check transcript length
     if (this.state.callActive) {
       this.endCall(false);
     } else {
@@ -105,8 +103,8 @@ const Demo = {
       this.startRecognition();
       return;
     }
-    // Pause recognition while AI speaks to avoid conflict
-    this.pauseRecognition();
+    // Don't stop recognition - just set canCapture false so we ignore speech while AI talks
+    this.state.canCapture = false;
     window.speechSynthesis.cancel();
     const u = new SpeechSynthesisUtterance(text);
     if (this.state.selectedVoice) u.voice = this.state.selectedVoice;
@@ -117,7 +115,6 @@ const Demo = {
       this.state.isSpeaking = false;
       this.state.canCapture = true;
       this.debug('Your turn - speak or type below');
-      this.startRecognition();
     };
     u.onerror = () => {
       this.state.isSpeaking = false;
@@ -153,7 +150,6 @@ const Demo = {
           if (this.state.finalText.trim() && this.state.canCapture && !this.state.isProcessing) {
             this.state.canCapture = false;
             this.state.isProcessing = true;
-            this.pauseRecognition();
             this.handleUserSpeech(this.state.finalText.trim());
           }
         }, 800);
@@ -171,6 +167,7 @@ const Demo = {
 
     this.state.recognition.onend = () => {
       this.state.isListening = false;
+      // Auto-restart recognition if call is still active - keeps mic hot entire call
       if (this.state.callActive && !this.state.isSpeaking && !this.state.isProcessing) {
         clearTimeout(this.state.restartTimer);
         this.state.restartTimer = setTimeout(() => {
@@ -235,14 +232,16 @@ const Demo = {
     this.addChatMessage('system', 'Calling... connecting you now.');
     this.startTimer();
 
-    // Init speech recognition
+    // START MIC IMMEDIATELY - Chrome requires user gesture for mic permission
+    // canCapture is false so we won't process speech while the prospect greets
     if (this.initSpeechRecognition()) {
-      this.debug('Voice ready - starting call');
+      this.startRecognition();
+      this.debug('Listening (prospect is answering...)');
     } else {
       this.debug('No voice - type below to talk');
     }
 
-    // Prospect answers the phone after a short delay
+    // Prospect answers after 1 second
     setTimeout(() => {
       if (!this.state.callActive) return;
       this.prospectAnswers();
@@ -250,17 +249,15 @@ const Demo = {
   },
 
   prospectAnswers() {
-    // The prospect picks up and says hello first
     const greeting = "Hello?";
     this.addChatMessage('ai', greeting);
     this.state.transcript.push({ role: 'assistant', content: greeting });
     this.speak(greeting);
 
-    // After the greeting, enable user input
+    // After greeting, enable user to talk (mic is already running)
     setTimeout(() => {
       if (!this.state.callActive) return;
       this.state.canCapture = true;
-      this.startRecognition();
       this.debug('Your turn - speak or type below');
     }, 1800);
   },
@@ -330,7 +327,6 @@ const Demo = {
       if (!response.ok) throw new Error('Failed');
       const result = await response.json();
 
-      // Remove placeholder
       const chat = document.getElementById('demoChat');
       const last = chat.lastElementChild;
       if (last && last.textContent === '...') last.remove();
@@ -351,7 +347,6 @@ const Demo = {
   },
 
   endCall(timedOut) {
-    // Kill everything
     this.state.callActive = false;
     this.state.canCapture = false;
     this.state.isProcessing = false;
@@ -365,7 +360,6 @@ const Demo = {
     clearTimeout(this.state.restartTimer);
     this.stopTimer();
 
-    // Hide call UI
     document.getElementById('demoStartBtn').style.display = 'none';
     document.getElementById('demoChat').style.display = 'none';
     const timerBar = document.querySelector('.demo-timer-bar');
@@ -379,10 +373,6 @@ const Demo = {
     const debug = document.getElementById('demoDebug');
     if (debug) debug.classList.add('hidden');
 
-    // Show upsell
-    if (timedOut) {
-      // Show a message in upsell area
-    }
     document.getElementById('demoUpsell').classList.remove('hidden');
   },
 

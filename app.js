@@ -79,7 +79,8 @@ const App = {
       this.startRecognition();
       return;
     }
-    this.pauseRecognition();
+    // Don't stop recognition - just mute capture so we don't hear ourselves
+    this.state.canCapture = false;
     window.speechSynthesis.cancel();
     const u = new SpeechSynthesisUtterance(text);
     if (this.state.selectedVoice) u.voice = this.state.selectedVoice;
@@ -429,8 +430,9 @@ const App = {
 
     this.goToStep(3);
 
-    // Init speech recognition
+    // START MIC IMMEDIATELY - Chrome requires user gesture for mic permission
     this.initSpeechRecognition();
+    this.startRecognition();
 
     if (mode === 'reversal') {
       setTimeout(() => this.startRoleReversal(), 500);

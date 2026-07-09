@@ -1,4 +1,4 @@
-/* MyPitchGym — Main Stylesheet */
+﻿/* MyPitchGym â€” Main Stylesheet */
 
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -80,7 +80,7 @@ body {
 .price .period { font-size: 1rem; font-weight: 400; color: #64748b; }
 .pricing-features { list-style: none; margin-bottom: 24px; text-align: left; }
 .pricing-features li { padding: 8px 0; color: #cbd5e1; font-size: 0.9rem; border-bottom: 1px solid #1e293b; }
-.pricing-features li::before { content: '✓ '; color: #22c55e; font-weight: 700; }
+.pricing-features li::before { content: 'âœ“ '; color: #22c55e; font-weight: 700; }
 .pricing-note { font-size: 0.8rem; color: #64748b; margin-top: 8px; }
 
 /* FAQ */
@@ -119,7 +119,7 @@ body {
   .section h2 { font-size: 1.6rem; }
 }
 
-/* ─── Demo Widget (Landing Page) ─── */
+/* â”€â”€â”€ Demo Widget (Landing Page) â”€â”€â”€ */
 .demo-widget {
   position: fixed;
   bottom: 24px;
@@ -170,7 +170,7 @@ body {
 .demo-title { font-size: 0.9rem; font-weight: 700; }
 .demo-sub { font-size: 0.72rem; opacity: 0.85; }
 
-/* ─── Demo Modal ─── */
+/* â”€â”€â”€ Demo Modal â”€â”€â”€ */
 .demo-modal-overlay {
   display: none;
   position: fixed;
@@ -190,8 +190,11 @@ body {
   padding: 28px;
   max-width: 480px;
   width: 100%;
+  max-height: 90vh;
+  overflow-y: auto;
   position: relative;
   border: 1px solid #334155;
+  -webkit-overflow-scrolling: touch;
 }
 .demo-close-btn {
   position: absolute;
@@ -338,7 +341,7 @@ body {
   position: relative;
 }
 .demo-upsell li::before {
-  content: '✓';
+  content: 'âœ“';
   position: absolute;
   left: 0;
   color: #22c55e;
@@ -373,4 +376,45 @@ body {
   .demo-sub { font-size: 0.68rem; }
   .demo-modal { padding: 20px; }
   .demo-chat { max-height: 260px; }
+}
+/* Demo text input fallback */
+.demo-text-input {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.demo-text-input input {
+  flex: 1;
+  background: #0f172a;
+  border: 1px solid #334155;
+  border-radius: 8px;
+  padding: 12px 14px;
+  color: #f1f5f9;
+  font-size: 0.9rem;
+  font-family: inherit;
+}
+.demo-text-input input:focus {
+  outline: none;
+  border-color: #6366f1;
+}
+.demo-send-btn {
+  background: #6366f1;
+  color: #fff;
+  border: none;
+  padding: 12px 18px;
+  border-radius: 8px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.demo-send-btn:hover { background: #4f46e5; }
+
+/* Demo debug status */
+.demo-debug {
+  font-size: 0.78rem;
+  color: #64748b;
+  text-align: center;
+  padding: 4px 0 8px;
+  font-style: italic;
 }

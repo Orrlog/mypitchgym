@@ -1,4 +1,4 @@
-// MyPitchGym - Frontend Application Logic
+﻿// MyPitchGym - Frontend Application Logic
 
 const App = {
   state: {
@@ -17,13 +17,20 @@ const App = {
     callActive: false,
     recognition: null,
     voiceEnabled: true,
-    selectedVoice: null
+    selectedVoice: null,
+    finalText: '',
+    silenceTimer: null,
+    restartTimer: null
   },
 
   init() {
     if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
-      document.getElementById('voiceError').textContent = 'Voice recognition needs Chrome browser. You can still type your responses.';
-      document.getElementById('voiceError').classList.remove('hidden');
+      const ve = document.getElementById('voiceError');
+      if (ve) { ve.textContent = 'Voice recognition needs Chrome browser. You can type your responses below.'; ve.classList.remove('hidden'); }
+      const ti = document.getElementById('textInput');
+      const bs = document.getElementById('btnSendText');
+      if (ti) ti.disabled = false;
+      if (bs) bs.disabled = false;
     }
     this.setupFormHandlers();
     this.setupCallHandlers();
@@ -66,7 +73,13 @@ const App = {
   },
 
   speak(text) {
-    if (!this.state.voiceEnabled || !window.speechSynthesis) return;
+    if (!this.state.voiceEnabled || !window.speechSynthesis) {
+      this.state.isSpeaking = false;
+      this.state.canCapture = true;
+      this.startRecognition();
+      return;
+    }
+    this.pauseRecognition();
     window.speechSynthesis.cancel();
     const u = new SpeechSynthesisUtterance(text);
     if (this.state.selectedVoice) u.voice = this.state.selectedVoice;
@@ -77,6 +90,12 @@ const App = {
       this.state.isSpeaking = false;
       this.state.canCapture = true;
       this.updateCallStatus('Your turn - just talk');
+      this.startRecognition();
+    };
+    u.onerror = () => {
+      this.state.isSpeaking = false;
+      this.state.canCapture = true;
+      this.startRecognition();
     };
     window.speechSynthesis.speak(u);
   },
@@ -89,27 +108,23 @@ const App = {
     this.state.recognition.interimResults = true;
     this.state.recognition.lang = 'en-US';
 
-    let silenceTimer = null;
-    let finalText = '';
-
     this.state.recognition.onresult = (event) => {
-      // Ignore while AI is talking or processing
       if (this.state.isSpeaking || this.state.isProcessing || !this.state.canCapture) return;
-
       let interim = '';
-      finalText = '';
+      this.state.finalText = '';
       for (let i = event.resultIndex; i < event.results.length; i++) {
         const t = event.results[i][0].transcript;
-        if (event.results[i].isFinal) { finalText += t; } else { interim += t; }
+        if (event.results[i].isFinal) { this.state.finalText += t; } else { interim += t; }
       }
-      if (interim) { this.updateCallStatus('Hearing: "' + interim.substring(0,50) + '..."'); }
-      if (finalText) {
-        clearTimeout(silenceTimer);
-        silenceTimer = setTimeout(() => {
-          if (finalText.trim() && this.state.canCapture && !this.state.isProcessing) {
+      if (interim) { this.updateCallStatus('Hearing: "' + interim.substring(0, 40) + '..."'); }
+      if (this.state.finalText) {
+        clearTimeout(this.state.silenceTimer);
+        this.state.silenceTimer = setTimeout(() => {
+          if (this.state.finalText.trim() && this.state.canCapture && !this.state.isProcessing) {
             this.state.canCapture = false;
             this.state.isProcessing = true;
-            this.handleUserSpeech(finalText.trim());
+            this.pauseRecognition();
+            this.handleUserSpeech(this.state.finalText.trim());
           }
         }, 800);
       }
@@ -117,18 +132,23 @@ const App = {
 
     this.state.recognition.onerror = (event) => {
       if (event.error === 'no-speech') return;
-      if (event.error === 'not-allowed') {
-        document.getElementById('voiceError').textContent = 'Microphone access denied. Allow mic access in your browser settings.';
-        document.getElementById('voiceError').classList.remove('hidden');
+      if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
+        const ve = document.getElementById('voiceError');
+        if (ve) { ve.textContent = 'Mic blocked. Type your responses below.'; ve.classList.remove('hidden'); }
+        const ti = document.getElementById('textInput');
+        const bs = document.getElementById('btnSendText');
+        if (ti) ti.disabled = false;
+        if (bs) bs.disabled = false;
       }
     };
 
     this.state.recognition.onend = () => {
-      // Auto-restart if call is still active - keeps mic hot entire call
-      if (this.state.callActive) {
-        setTimeout(() => {
-          if (this.state.callActive) {
-            try { this.state.recognition.start(); } catch(e) {}
+      this.state.isListening = false;
+      if (this.state.callActive && !this.state.isSpeaking && !this.state.isProcessing) {
+        clearTimeout(this.state.restartTimer);
+        this.state.restartTimer = setTimeout(() => {
+          if (this.state.callActive && !this.state.isSpeaking && !this.state.isProcessing) {
+            this.startRecognition();
           }
         }, 200);
       }
@@ -137,21 +157,37 @@ const App = {
     return true;
   },
 
-  startListening() {
-    if (!this.state.recognition && !this.initSpeechRecognition()) {
-      document.getElementById('textInput').disabled = false;
-      document.getElementById('btnSendText').disabled = false;
-      return;
-    }
-    this.state.callActive = true;
-    this.state.canCapture = true;
-    this.state.isProcessing = false;
+  startRecognition() {
+    if (!this.state.recognition || !this.state.callActive) return;
+    if (this.state.isListening) return;
     try {
       this.state.recognition.start();
       this.state.isListening = true;
     } catch(e) {
       if (e.message && e.message.includes('already started')) { this.state.isListening = true; }
     }
+  },
+
+  pauseRecognition() {
+    if (this.state.recognition && this.state.isListening) {
+      try { this.state.recognition.stop(); } catch(e) {}
+      this.state.isListening = false;
+    }
+  },
+
+  startListening() {
+    if (!this.state.recognition && !this.initSpeechRecognition()) {
+      const ti = document.getElementById('textInput');
+      const bs = document.getElementById('btnSendText');
+      if (ti) ti.disabled = false;
+      if (bs) bs.disabled = false;
+      return;
+    }
+    this.state.callActive = true;
+    this.state.canCapture = true;
+    this.state.isProcessing = false;
+    this.startRecognition();
+
     document.getElementById('btnStartSpeaking').textContent = 'End Call';
     document.getElementById('btnStartSpeaking').classList.add('btn-danger');
     this.updateCallStatus('Listening - talk whenever you are ready');
@@ -162,7 +198,7 @@ const App = {
     this.state.callActive = false;
     this.state.canCapture = false;
     if (this.state.recognition) { try { this.state.recognition.stop(); } catch(e) {} }
-    document.getElementById('btnStartSpeaking').textContent = 'Start the Call';
+    document.getElementById('btnStartSpeaking').textContent = 'Start Speaking';
     document.getElementById('btnStartSpeaking').classList.remove('btn-danger');
   },
 
@@ -330,7 +366,8 @@ const App = {
 
   setupCallHandlers() {
     document.getElementById('btnStartSpeaking').addEventListener('click', () => {
-      if (this.state.callActive && this.state.transcript.length > 0) {
+      // FIX: if call is active, ALWAYS end it
+      if (this.state.callActive) {
         this.endCall();
       } else {
         this.startListening();
@@ -340,7 +377,13 @@ const App = {
     document.getElementById('btnSendText').addEventListener('click', () => {
       const input = document.getElementById('textInput');
       const text = input.value.trim();
-      if (text) { input.value = ''; this.handleUserSpeech(text); }
+      if (text && this.state.callActive && !this.state.isProcessing && !this.state.isSpeaking) {
+        input.value = '';
+        this.state.canCapture = false;
+        this.state.isProcessing = true;
+        this.pauseRecognition();
+        this.handleUserSpeech(text);
+      }
     });
     document.getElementById('textInput').addEventListener('keypress', (e) => {
       if (e.key === 'Enter') { document.getElementById('btnSendText').click(); }
@@ -362,10 +405,18 @@ const App = {
   startCall(mode) {
     this.state.callMode = mode;
     this.state.transcript = [];
-    this.state.callActive = false;
+    this.state.callActive = true;
     this.state.canCapture = false;
     this.state.isProcessing = false;
+    this.state.isSpeaking = false;
+    this.state.finalText = '';
     document.getElementById('callChat').innerHTML = '';
+
+    // Enable text input always as fallback
+    const ti = document.getElementById('textInput');
+    const bs = document.getElementById('btnSendText');
+    if (ti) ti.disabled = false;
+    if (bs) bs.disabled = false;
 
     const banner = document.getElementById('roleReverseBanner');
     if (mode === 'reversal') {
@@ -373,17 +424,41 @@ const App = {
       this.addChatMessage('system', 'Role Reversal: The AI will pitch to YOU. Play the prospect.');
     } else {
       banner.classList.add('hidden');
-      this.addChatMessage('system', 'Cold call - the prospect just answered. Start pitching whenever ready. Just talk naturally. Tap End Call when done.');
+      this.addChatMessage('system', 'Calling... connecting you now.');
     }
 
     this.goToStep(3);
 
+    // Init speech recognition
+    this.initSpeechRecognition();
+
     if (mode === 'reversal') {
       setTimeout(() => this.startRoleReversal(), 500);
     } else {
-      // Auto-start listening - user is the salesperson, they pitch first
-      setTimeout(() => this.startListening(), 500);
+      // Prospect answers the phone after a delay
+      setTimeout(() => {
+        if (!this.state.callActive) return;
+        this.prospectAnswers();
+      }, 1000);
     }
+  },
+
+  prospectAnswers() {
+    const greeting = "Hello?";
+    this.addChatMessage('ai', greeting);
+    this.state.transcript.push({ role: 'assistant', content: greeting });
+    document.getElementById('btnStartSpeaking').textContent = 'End Call';
+    document.getElementById('btnStartSpeaking').classList.add('btn-danger');
+    this.updateCallStatus('AI speaking...');
+    this.speak(greeting);
+
+    // After greeting, enable user to talk
+    setTimeout(() => {
+      if (!this.state.callActive) return;
+      this.state.canCapture = true;
+      this.startRecognition();
+      this.updateCallStatus('Your turn - just talk');
+    }, 1800);
   },
 
   async startRoleReversal() {
@@ -409,6 +484,12 @@ const App = {
       this.addChatMessage('ai', result.message);
       this.speak(result.message);
       this.state.transcript.push({ role: 'assistant', content: result.message });
+      // Enable user input after AI speaks
+      this.state.callActive = true;
+      this.state.canCapture = true;
+      this.startRecognition();
+      document.getElementById('btnStartSpeaking').textContent = 'End Call';
+      document.getElementById('btnStartSpeaking').classList.add('btn-danger');
     } catch (err) {
       console.error('Role reversal error:', err);
       document.getElementById('callChat').innerHTML = '';
@@ -417,7 +498,12 @@ const App = {
   },
 
   async handleUserSpeech(text) {
-    if (!text || !text.trim()) return;
+    if (!text || !text.trim()) {
+      this.state.isProcessing = false;
+      this.state.canCapture = true;
+      this.startRecognition();
+      return;
+    }
     this.addChatMessage('user', text);
     this.state.transcript.push({ role: 'user', content: text });
     this.addChatMessage('ai', '...');
@@ -441,14 +527,16 @@ const App = {
       const result = await response.json();
       this.removeLastPlaceholder();
       this.addChatMessage('ai', result.message);
-      this.speak(result.message);
       this.state.transcript.push({ role: 'assistant', content: result.message });
+      this.state.isProcessing = false;
+      this.speak(result.message);
     } catch (err) {
       console.error('Roleplay error:', err);
       this.removeLastPlaceholder();
       this.addChatMessage('system', 'Connection issue. Try speaking again.');
       this.state.isProcessing = false;
       this.state.canCapture = true;
+      this.startRecognition();
     }
   },
 
@@ -460,7 +548,10 @@ const App = {
 
   async endCall() {
     this.stopListening();
+    clearTimeout(this.state.silenceTimer);
+    clearTimeout(this.state.restartTimer);
     if (window.speechSynthesis) window.speechSynthesis.cancel();
+
     if (this.state.transcript.length < 2) {
       this.addChatMessage('system', 'Call ended. Not enough conversation for coaching.');
       setTimeout(() => this.goToStep(1), 1500);
@@ -501,10 +592,10 @@ const App = {
     scoreEl.appendChild(text);
     const listEl = document.getElementById('coachingList');
     listEl.innerHTML = '';
-    if (coaching.nailed && coaching.nailed.length) { coaching.nailed.forEach(item => listEl.appendChild(this.createCoachingItem('✅', item))); }
-    if (coaching.missed && coaching.missed.length) { coaching.missed.forEach(item => listEl.appendChild(this.createCoachingItem('⚠️', item))); }
-    if (coaching.tips && coaching.tips.length) { coaching.tips.forEach(item => listEl.appendChild(this.createCoachingItem('💡', item))); }
-    if (coaching.objection_handling) { listEl.appendChild(this.createCoachingItem('🎯', 'Objection Handling: ' + coaching.objection_handling)); }
+    if (coaching.nailed && coaching.nailed.length) { coaching.nailed.forEach(item => listEl.appendChild(this.createCoachingItem('NAILED', item))); }
+    if (coaching.missed && coaching.missed.length) { coaching.missed.forEach(item => listEl.appendChild(this.createCoachingItem('MISS', item))); }
+    if (coaching.tips && coaching.tips.length) { coaching.tips.forEach(item => listEl.appendChild(this.createCoachingItem('TIP', item))); }
+    if (coaching.objection_handling) { listEl.appendChild(this.createCoachingItem('OBJ', 'Objection Handling: ' + coaching.objection_handling)); }
   },
 
   createCoachingItem(icon, text) {

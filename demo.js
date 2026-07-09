@@ -1,9 +1,8 @@
-// MyPitchGym - Landing Page Demo Call (2 minutes, no signup)
+﻿// MyPitchGym - Landing Page Demo Call (2 minutes, no signup)
 
 const Demo = {
   state: {
     callActive: false,
-    callStarted: false,
     transcript: [],
     isListening: false,
     isSpeaking: false,
@@ -13,7 +12,10 @@ const Demo = {
     voiceEnabled: true,
     selectedVoice: null,
     timerInterval: null,
-    timeRemaining: 120
+    timeRemaining: 120,
+    finalText: '',
+    silenceTimer: null,
+    restartTimer: null
   },
 
   demoProduct: {
@@ -36,32 +38,75 @@ const Demo = {
       load();
       window.speechSynthesis.onvoiceschanged = load;
     }
+
     document.getElementById('demoBtn').addEventListener('click', () => this.openModal());
     document.getElementById('demoCloseBtn').addEventListener('click', () => this.closeModal());
     document.getElementById('demoStartBtn').addEventListener('click', () => this.toggleCall());
+
+    // Text input fallback - always available during call
+    const sendBtn = document.getElementById('demoSendText');
+    const textInput = document.getElementById('demoTextInput');
+    if (sendBtn) sendBtn.addEventListener('click', () => this.sendText());
+    if (textInput) textInput.addEventListener('keypress', (e) => {
+      if (e.key === 'Enter') this.sendText();
+    });
+
     document.getElementById('demoModal').addEventListener('click', (e) => {
       if (e.target.id === 'demoModal') this.closeModal();
     });
-    setTimeout(() => { document.getElementById('demoWidget').classList.add('visible'); }, 3000);
+
+    setTimeout(() => {
+      const w = document.getElementById('demoWidget');
+      if (w) w.classList.add('visible');
+    }, 3000);
   },
 
   openModal() { document.getElementById('demoModal').classList.add('visible'); },
 
   closeModal() {
-    if (this.state.callActive) { this.endCall(false); }
+    if (this.state.callActive) this.endCall(false);
     document.getElementById('demoModal').classList.remove('visible');
   },
 
   toggleCall() {
-    if (this.state.callActive && this.state.transcript.length > 0) {
+    // FIX: if call is active, ALWAYS end it - don't check transcript length
+    if (this.state.callActive) {
       this.endCall(false);
     } else {
       this.startCall();
     }
   },
 
+  sendText() {
+    const input = document.getElementById('demoTextInput');
+    if (!input) return;
+    const text = input.value.trim();
+    if (text && this.state.callActive && !this.state.isProcessing && !this.state.isSpeaking) {
+      input.value = '';
+      this.state.canCapture = false;
+      this.state.isProcessing = true;
+      this.pauseRecognition();
+      this.handleUserSpeech(text);
+    }
+  },
+
+  debug(msg) {
+    const el = document.getElementById('demoDebug');
+    if (el) {
+      el.textContent = msg;
+      el.classList.remove('hidden');
+    }
+  },
+
   speak(text) {
-    if (!window.speechSynthesis) return;
+    if (!window.speechSynthesis) {
+      this.state.isSpeaking = false;
+      this.state.canCapture = true;
+      this.startRecognition();
+      return;
+    }
+    // Pause recognition while AI speaks to avoid conflict
+    this.pauseRecognition();
     window.speechSynthesis.cancel();
     const u = new SpeechSynthesisUtterance(text);
     if (this.state.selectedVoice) u.voice = this.state.selectedVoice;
@@ -71,36 +116,45 @@ const Demo = {
     u.onend = () => {
       this.state.isSpeaking = false;
       this.state.canCapture = true;
+      this.debug('Your turn - speak or type below');
+      this.startRecognition();
+    };
+    u.onerror = () => {
+      this.state.isSpeaking = false;
+      this.state.canCapture = true;
+      this.startRecognition();
     };
     window.speechSynthesis.speak(u);
   },
 
   initSpeechRecognition() {
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!SR) return false;
+    if (!SR) {
+      this.debug('Voice not available - type below to talk');
+      return false;
+    }
     this.state.recognition = new SR();
     this.state.recognition.continuous = true;
     this.state.recognition.interimResults = true;
     this.state.recognition.lang = 'en-US';
 
-    let silenceTimer = null;
-    let finalText = '';
-
     this.state.recognition.onresult = (event) => {
       if (this.state.isSpeaking || this.state.isProcessing || !this.state.canCapture) return;
       let interim = '';
-      finalText = '';
+      this.state.finalText = '';
       for (let i = event.resultIndex; i < event.results.length; i++) {
         const t = event.results[i][0].transcript;
-        if (event.results[i].isFinal) { finalText += t; } else { interim += t; }
+        if (event.results[i].isFinal) { this.state.finalText += t; } else { interim += t; }
       }
-      if (finalText) {
-        clearTimeout(silenceTimer);
-        silenceTimer = setTimeout(() => {
-          if (finalText.trim() && this.state.canCapture && !this.state.isProcessing) {
+      if (interim) this.debug('Hearing: "' + interim.substring(0, 40) + '"');
+      if (this.state.finalText) {
+        clearTimeout(this.state.silenceTimer);
+        this.state.silenceTimer = setTimeout(() => {
+          if (this.state.finalText.trim() && this.state.canCapture && !this.state.isProcessing) {
             this.state.canCapture = false;
             this.state.isProcessing = true;
-            this.handleUserSpeech(finalText.trim());
+            this.pauseRecognition();
+            this.handleUserSpeech(this.state.finalText.trim());
           }
         }, 800);
       }
@@ -108,13 +162,20 @@ const Demo = {
 
     this.state.recognition.onerror = (event) => {
       if (event.error === 'no-speech') return;
+      if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
+        this.debug('Mic blocked - type below to talk');
+      } else {
+        this.debug('Mic error: ' + event.error + ' - type below');
+      }
     };
 
     this.state.recognition.onend = () => {
-      if (this.state.callActive && this.state.timeRemaining > 0) {
-        setTimeout(() => {
-          if (this.state.callActive && this.state.timeRemaining > 0) {
-            try { this.state.recognition.start(); } catch(e) {}
+      this.state.isListening = false;
+      if (this.state.callActive && !this.state.isSpeaking && !this.state.isProcessing) {
+        clearTimeout(this.state.restartTimer);
+        this.state.restartTimer = setTimeout(() => {
+          if (this.state.callActive && !this.state.isSpeaking && !this.state.isProcessing) {
+            this.startRecognition();
           }
         }, 200);
       }
@@ -123,41 +184,85 @@ const Demo = {
     return true;
   },
 
-  startListening() {
-    if (!this.state.recognition && !this.initSpeechRecognition()) {
-      this.addChatMessage('system', 'Voice needs Chrome. This demo works best in Chrome browser.');
-      return;
-    }
-    this.state.callActive = true;
-    this.state.canCapture = true;
-    this.state.isProcessing = false;
+  startRecognition() {
+    if (!this.state.recognition || !this.state.callActive) return;
+    if (this.state.isListening) return;
     try {
       this.state.recognition.start();
       this.state.isListening = true;
     } catch(e) {
-      if (e.message && e.message.includes('already started')) { this.state.isListening = true; }
+      if (e.message && e.message.includes('already started')) {
+        this.state.isListening = true;
+      }
     }
-    document.getElementById('demoStartBtn').textContent = 'End Call';
-    document.getElementById('demoStartBtn').classList.add('listening');
   },
 
-  stopListening() {
-    this.state.isListening = false;
-    this.state.callActive = false;
-    this.state.canCapture = false;
-    if (this.state.recognition) { try { this.state.recognition.stop(); } catch(e) {} }
+  pauseRecognition() {
+    if (this.state.recognition && this.state.isListening) {
+      try { this.state.recognition.stop(); } catch(e) {}
+      this.state.isListening = false;
+    }
   },
 
   startCall() {
-    this.state.callStarted = true;
+    // Reset all state
     this.state.transcript = [];
-    this.state.callActive = false;
+    this.state.callActive = true;
     this.state.canCapture = false;
     this.state.isProcessing = false;
+    this.state.isSpeaking = false;
+    this.state.finalText = '';
+
+    // Show text input (always visible as fallback)
+    const textArea = document.getElementById('demoTextInputArea');
+    if (textArea) textArea.classList.remove('hidden');
+
+    // Reset UI
     document.getElementById('demoChat').innerHTML = '';
-    this.addChatMessage('system', 'Cold call - the prospect just answered. Start pitching solar panels whenever ready. Just talk naturally.');
+    document.getElementById('demoChat').style.display = '';
+    document.getElementById('demoStartBtn').textContent = 'End Call';
+    document.getElementById('demoStartBtn').classList.add('listening');
+    document.getElementById('demoStartBtn').style.display = '';
+
+    const timerBar = document.querySelector('.demo-timer-bar');
+    if (timerBar) timerBar.style.display = '';
+    const timerText = document.getElementById('demoTimerText');
+    if (timerText) timerText.style.display = '';
+    const header = document.querySelector('.demo-header');
+    if (header) header.style.display = '';
+    document.getElementById('demoUpsell').classList.add('hidden');
+
+    this.addChatMessage('system', 'Calling... connecting you now.');
     this.startTimer();
-    setTimeout(() => this.startListening(), 500);
+
+    // Init speech recognition
+    if (this.initSpeechRecognition()) {
+      this.debug('Voice ready - starting call');
+    } else {
+      this.debug('No voice - type below to talk');
+    }
+
+    // Prospect answers the phone after a short delay
+    setTimeout(() => {
+      if (!this.state.callActive) return;
+      this.prospectAnswers();
+    }, 1000);
+  },
+
+  prospectAnswers() {
+    // The prospect picks up and says hello first
+    const greeting = "Hello?";
+    this.addChatMessage('ai', greeting);
+    this.state.transcript.push({ role: 'assistant', content: greeting });
+    this.speak(greeting);
+
+    // After the greeting, enable user input
+    setTimeout(() => {
+      if (!this.state.callActive) return;
+      this.state.canCapture = true;
+      this.startRecognition();
+      this.debug('Your turn - speak or type below');
+    }, 1800);
   },
 
   startTimer() {
@@ -166,31 +271,47 @@ const Demo = {
     this.state.timerInterval = setInterval(() => {
       this.state.timeRemaining--;
       this.updateTimerDisplay();
-      if (this.state.timeRemaining <= 0) { this.endCall(true); }
+      if (this.state.timeRemaining <= 0) {
+        this.endCall(true);
+      }
     }, 1000);
   },
 
   stopTimer() {
-    if (this.state.timerInterval) { clearInterval(this.state.timerInterval); this.state.timerInterval = null; }
+    if (this.state.timerInterval) {
+      clearInterval(this.state.timerInterval);
+      this.state.timerInterval = null;
+    }
   },
 
   updateTimerDisplay() {
     const mins = Math.floor(this.state.timeRemaining / 60);
     const secs = this.state.timeRemaining % 60;
-    document.getElementById('demoTimerText').textContent = mins + ':' + (secs < 10 ? '0' : '') + secs;
-    const pct = (this.state.timeRemaining / 120) * 100;
-    document.getElementById('demoTimerFill').style.width = pct + '%';
-    if (this.state.timeRemaining <= 30) {
-      document.getElementById('demoTimerText').style.color = '#ef4444';
-      document.getElementById('demoTimerFill').style.background = '#ef4444';
+    const el = document.getElementById('demoTimerText');
+    if (el) el.textContent = mins + ':' + (secs < 10 ? '0' : '') + secs;
+    const fill = document.getElementById('demoTimerFill');
+    if (fill) {
+      const pct = (this.state.timeRemaining / 120) * 100;
+      fill.style.width = pct + '%';
+      if (this.state.timeRemaining <= 30) {
+        el.style.color = '#ef4444';
+        fill.style.background = '#ef4444';
+      }
     }
   },
 
   async handleUserSpeech(text) {
-    if (!text || !text.trim()) return;
+    if (!text || !text.trim()) {
+      this.state.isProcessing = false;
+      this.state.canCapture = true;
+      this.startRecognition();
+      return;
+    }
     this.addChatMessage('user', text);
     this.state.transcript.push({ role: 'user', content: text });
     this.addChatMessage('ai', '...');
+    this.debug('AI is thinking...');
+
     try {
       const response = await fetch('/api/roleplay', {
         method: 'POST',
@@ -208,37 +329,66 @@ const Demo = {
       });
       if (!response.ok) throw new Error('Failed');
       const result = await response.json();
+
+      // Remove placeholder
       const chat = document.getElementById('demoChat');
       const last = chat.lastElementChild;
       if (last && last.textContent === '...') last.remove();
+
       this.addChatMessage('ai', result.message);
-      this.speak(result.message);
       this.state.transcript.push({ role: 'assistant', content: result.message });
+      this.state.isProcessing = false;
+      this.speak(result.message);
     } catch (err) {
       const chat = document.getElementById('demoChat');
       const last = chat.lastElementChild;
       if (last && last.textContent === '...') last.remove();
-      this.addChatMessage('system', 'Connection issue. Try speaking again.');
+      this.addChatMessage('system', 'Connection issue. Try again.');
       this.state.isProcessing = false;
       this.state.canCapture = true;
+      this.startRecognition();
     }
   },
 
   endCall(timedOut) {
-    this.stopListening();
-    this.stopTimer();
+    // Kill everything
+    this.state.callActive = false;
+    this.state.canCapture = false;
+    this.state.isProcessing = false;
+    this.state.isSpeaking = false;
+
+    if (this.state.recognition) {
+      try { this.state.recognition.stop(); } catch(e) {}
+    }
     if (window.speechSynthesis) window.speechSynthesis.cancel();
-    if (timedOut) { this.addChatMessage('system', '2 minutes is up! That was a quick sample.'); }
+    clearTimeout(this.state.silenceTimer);
+    clearTimeout(this.state.restartTimer);
+    this.stopTimer();
+
+    // Hide call UI
     document.getElementById('demoStartBtn').style.display = 'none';
     document.getElementById('demoChat').style.display = 'none';
-    document.querySelector('.demo-timer-bar').style.display = 'none';
-    document.getElementById('demoTimerText').style.display = 'none';
-    document.querySelector('.demo-header').style.display = 'none';
+    const timerBar = document.querySelector('.demo-timer-bar');
+    if (timerBar) timerBar.style.display = 'none';
+    const timerText = document.getElementById('demoTimerText');
+    if (timerText) timerText.style.display = 'none';
+    const header = document.querySelector('.demo-header');
+    if (header) header.style.display = 'none';
+    const textArea = document.getElementById('demoTextInputArea');
+    if (textArea) textArea.classList.add('hidden');
+    const debug = document.getElementById('demoDebug');
+    if (debug) debug.classList.add('hidden');
+
+    // Show upsell
+    if (timedOut) {
+      // Show a message in upsell area
+    }
     document.getElementById('demoUpsell').classList.remove('hidden');
   },
 
   addChatMessage(role, text) {
     const chat = document.getElementById('demoChat');
+    if (!chat) return;
     const bubble = document.createElement('div');
     bubble.className = 'demo-bubble ' + role;
     bubble.textContent = text;

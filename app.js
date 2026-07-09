@@ -12,6 +12,9 @@ const App = {
     callMode: 'roleplay', // 'roleplay' or 'reversal'
     transcript: [],
     isListening: false,
+    canCapture: false,
+    isProcessing: false,
+    callEnded: false,
     isSpeaking: false,
     recognition: null,
     voiceEnabled: true,
@@ -90,18 +93,20 @@ const App = {
     if (this.state.selectedVoice) utterance.voice = this.state.selectedVoice;
     utterance.rate = 1.05;
     utterance.pitch = 0.95;
-    utterance.onstart = () => { this.state.isSpeaking = true; };
+    utterance.onstart = () => { 
+      this.state.isSpeaking = true;
+      this.updateCallStatus('AI is speaking...');
+    };
     utterance.onend = () => {
       this.state.isSpeaking = false;
-      // Auto-restart listening for natural back-and-forth conversation
-      if (this.state.step === 3) {
-        this.startListening();
-      }
+      // Recognition is still running - just flip the flag back
+      this.state.canCapture = true;
+      this.updateCallStatus('Your turn — just talk');
     };
     window.speechSynthesis.speak(utterance);
   },
 
-  // ─── SPEECH RECOGNITION ───
+  // ─── SPEECH RECOGNITION (continuous - never stops during a call) ───
   initSpeechRecognition() {
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SpeechRecognition) return false;
@@ -112,10 +117,15 @@ const App = {
 
     let finalTranscript = '';
     let silenceTimer = null;
+    let hasProcessed = false;
 
     this.state.recognition.onresult = (event) => {
+      // Ignore speech while AI is talking or while processing
+      if (this.state.isSpeaking || this.state.isProcessing || !this.state.canCapture) return;
+
       let interim = '';
       finalTranscript = '';
+      hasProcessed = false;
       for (let i = event.resultIndex; i < event.results.length; i++) {
         const transcript = event.results[i][0].transcript;
         if (event.results[i].isFinal) {
@@ -125,13 +135,15 @@ const App = {
         }
       }
       if (interim) {
-        this.updateListeningIndicator(interim);
+        this.updateCallStatus('Hearing: "' + interim.substring(0, 50) + '..."');
       }
-      if (finalTranscript) {
+      if (finalTranscript && !hasProcessed) {
+        hasProcessed = true;
         clearTimeout(silenceTimer);
         silenceTimer = setTimeout(() => {
-          if (this.state.isListening) {
-            this.pauseListening();
+          if (finalTranscript.trim() && this.state.canCapture && !this.state.isProcessing) {
+            this.state.canCapture = false;
+            this.state.isProcessing = true;
             this.handleUserSpeech(finalTranscript.trim());
           }
         }, 800);
@@ -139,22 +151,23 @@ const App = {
     };
 
     this.state.recognition.onerror = (event) => {
-      console.error('Speech recognition error:', event.error);
       if (event.error === 'no-speech') return;
       if (event.error === 'not-allowed') {
         document.getElementById('voiceError').textContent = 'Microphone access denied. Allow mic access in your browser settings.';
         document.getElementById('voiceError').classList.remove('hidden');
       }
+      console.error('Speech recognition error:', event.error);
     };
 
     this.state.recognition.onend = () => {
-      // Only auto-restart if we're supposed to be listening AND the AI isn't speaking
-      if (this.state.isListening && !this.state.isSpeaking) {
+      // Auto-restart recognition if the call is still active
+      // This keeps the mic hot the entire call
+      if (this.state.step === 3 && !this.state.callEnded) {
         setTimeout(() => {
-          if (this.state.isListening && !this.state.isSpeaking && this.state.step === 3) {
+          if (this.state.step === 3 && !this.state.callEnded) {
             try { this.state.recognition.start(); } catch(e) {}
           }
-        }, 100);
+        }, 200);
       }
     };
 
@@ -168,39 +181,44 @@ const App = {
       document.getElementById('textInput').focus();
       return;
     }
+    this.state.callEnded = false;
+    this.state.canCapture = true;
+    this.state.isProcessing = false;
     try {
-      if (window.speechSynthesis) window.speechSynthesis.cancel();
       this.state.recognition.start();
       this.state.isListening = true;
-      document.getElementById('btnStartSpeaking').textContent = '🔴 Listening... (tap to stop)';
+      document.getElementById('btnStartSpeaking').textContent = '🔴 End Call';
       document.getElementById('btnStartSpeaking').classList.add('btn-danger');
-      document.getElementById('callStatusLabel').textContent = 'Listening to you...';
+      document.getElementById('callStatusLabel').textContent = 'Listening — talk whenever you are ready';
     } catch(e) {
-      console.error('Recognition start error:', e);
+      // Already started - that's fine
+      if (e.message && e.message.includes('already started')) {
+        this.state.isListening = true;
+      } else {
+        console.error('Recognition start error:', e);
+      }
     }
   },
 
   stopListening() {
+    this.state.isListening = false;
+    this.state.callEnded = true;
+    this.state.canCapture = false;
     if (this.state.recognition) {
-      this.state.isListening = false;
       try { this.state.recognition.stop(); } catch(e) {}
-      document.getElementById('btnStartSpeaking').textContent = '🎤 Start the Call';
-      document.getElementById('btnStartSpeaking').classList.remove('btn-danger');
     }
+    document.getElementById('btnStartSpeaking').textContent = '🎤 Start the Call';
+    document.getElementById('btnStartSpeaking').classList.remove('btn-danger');
   },
 
-  // Pause listening temporarily (while AI processes/speaks) - will auto-restart
   pauseListening() {
-    this.state.isListening = false;
-    if (this.state.recognition) {
-      try { this.state.recognition.stop(); } catch(e) {}
-    }
+    // No longer used - recognition stays running, we just ignore input via canCapture flag
+    this.state.canCapture = false;
   },
 
   updateListeningIndicator(text) {
-    document.getElementById('callStatusLabel').textContent = 'Hearing: "' + text.substring(0, 50) + '..."';
+    this.updateCallStatus('Hearing: "' + text.substring(0, 50) + '..."');
   },
-
   // ─── FORM HANDLERS ───
   setupFormHandlers() {
     document.getElementById('addBenefitBtn').addEventListener('click', () => {
@@ -569,11 +587,13 @@ const App = {
       this.addChatMessage('ai', result.message);
       this.speak(result.message);
       this.state.transcript.push({ role: 'assistant', content: result.message });
-      this.updateCallStatus('Live Call');
+      // isProcessing and canCapture will be reset by speak() onend handler
     } catch (err) {
       console.error('Roleplay error:', err);
       this.removeLastPlaceholder();
       this.addChatMessage('system', 'Connection issue. Try speaking again.');
+      this.state.isProcessing = false;
+      this.state.canCapture = true;
     }
   },
 
@@ -586,6 +606,9 @@ const App = {
   },
 
   async endCall() {
+    this.state.callEnded = true;
+    this.state.canCapture = false;
+    this.state.isProcessing = false;
     this.stopListening();
     if (window.speechSynthesis) window.speechSynthesis.cancel();
 

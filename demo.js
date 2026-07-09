@@ -6,6 +6,8 @@ const Demo = {
     isActive: false,
     transcript: [],
     isListening: false,
+    canCapture: false,
+    isProcessing: false,
     recognition: null,
     voiceEnabled: true,
     selectedVoice: null,
@@ -74,15 +76,15 @@ const Demo = {
     if (this.state.selectedVoice) utterance.voice = this.state.selectedVoice;
     utterance.rate = 1.05;
     utterance.pitch = 0.95;
+    utterance.onstart = () => { this.state.isSpeaking = true; };
     utterance.onend = () => {
-      // Auto-restart listening for natural conversation
-      if (this.state.callStarted && this.state.timeRemaining > 0) {
-        this.startListening();
-      }
+      this.state.isSpeaking = false;
+      this.state.canCapture = true;
     };
     window.speechSynthesis.speak(utterance);
   },
 
+  // ─── SPEECH RECOGNITION (continuous) ───
   initSpeechRecognition() {
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SpeechRecognition) return false;
@@ -93,10 +95,14 @@ const Demo = {
 
     let finalTranscript = '';
     let silenceTimer = null;
+    let hasProcessed = false;
 
     this.state.recognition.onresult = (event) => {
+      if (this.state.isSpeaking || this.state.isProcessing || !this.state.canCapture) return;
+
       let interim = '';
       finalTranscript = '';
+      hasProcessed = false;
       for (let i = event.resultIndex; i < event.results.length; i++) {
         const transcript = event.results[i][0].transcript;
         if (event.results[i].isFinal) {
@@ -105,11 +111,13 @@ const Demo = {
           interim += transcript;
         }
       }
-      if (finalTranscript) {
+      if (finalTranscript && !hasProcessed) {
+        hasProcessed = true;
         clearTimeout(silenceTimer);
         silenceTimer = setTimeout(() => {
-          if (this.state.isListening) {
-            this.pauseListening();
+          if (finalTranscript.trim() && this.state.canCapture && !this.state.isProcessing) {
+            this.state.canCapture = false;
+            this.state.isProcessing = true;
             this.handleUserSpeech(finalTranscript.trim());
           }
         }, 800);
@@ -122,12 +130,12 @@ const Demo = {
     };
 
     this.state.recognition.onend = () => {
-      if (this.state.isListening && !this.state.isSpeaking && this.state.callStarted) {
+      if (this.state.callStarted && this.state.timeRemaining > 0) {
         setTimeout(() => {
-          if (this.state.isListening && !this.state.isSpeaking && this.state.callStarted) {
+          if (this.state.callStarted && this.state.timeRemaining > 0) {
             try { this.state.recognition.start(); } catch(e) {}
           }
-        }, 100);
+        }, 200);
       }
     };
 
@@ -139,60 +147,33 @@ const Demo = {
       this.addChatMessage('system', 'Voice needs Chrome browser. This demo works best in Chrome.');
       return;
     }
-    setTimeout(() => {
-      try {
-        if (window.speechSynthesis) window.speechSynthesis.cancel();
-        this.state.recognition.start();
+    this.state.canCapture = true;
+    this.state.isProcessing = false;
+    try {
+      this.state.recognition.start();
+      this.state.isListening = true;
+      document.getElementById('demoStartBtn').textContent = '🔴 End Call';
+      document.getElementById('demoStartBtn').classList.add('listening');
+    } catch(e) {
+      if (e.message && e.message.includes('already started')) {
         this.state.isListening = true;
-        document.getElementById('demoStartBtn').textContent = '🔴 Listening... (tap to end)';
-        document.getElementById('demoStartBtn').classList.add('listening');
-      } catch(e) {
-        if (e.message && e.message.includes('already started')) {
-          this.state.isListening = true;
-        } else {
-          console.error('Demo recognition start error:', e);
-          setTimeout(() => {
-            try { this.state.recognition.start(); this.state.isListening = true; } catch(e2) {}
-          }, 500);
-        }
+      } else {
+        console.error('Demo recognition start error:', e);
       }
-    }, 300);
+    }
   },
 
   stopListening() {
+    this.state.isListening = false;
+    this.state.canCapture = false;
     if (this.state.recognition) {
-      this.state.isListening = false;
       try { this.state.recognition.stop(); } catch(e) {}
-      document.getElementById('demoStartBtn').textContent = '🎤 Start Speaking';
-      document.getElementById('demoStartBtn').classList.remove('listening');
     }
   },
 
-  startCall() {
-    // If already listening, stop (toggle behavior)
-    if (this.state.isListening) {
-      this.stopListening();
-      return;
-    }
-
-    // First click starts the call
-    if (!this.state.callStarted) {
-      this.state.callStarted = true;
-      this.state.transcript = [];
-      document.getElementById('demoChat').innerHTML = '';
-      this.addChatMessage('system', 'The call has started. Pitch me those solar panels!');
-
-      // Start the 2-minute timer
-      this.startTimer();
-
-      // AI prospect opens first
-      this.addChatMessage('ai', '...');
-      setTimeout(() => this.getAIOpening(), 500);
-    }
-
-    this.startListening();
+  pauseListening() {
+    this.state.canCapture = false;
   },
-
   startTimer() {
     this.state.timeRemaining = 120;
     this.updateTimerDisplay();
@@ -305,6 +286,8 @@ const Demo = {
       const last = chat.lastElementChild;
       if (last && last.textContent === '...') last.remove();
       this.addChatMessage('system', 'Connection issue. Try speaking again.');
+      this.state.isProcessing = false;
+      this.state.canCapture = true;
     }
   },
 

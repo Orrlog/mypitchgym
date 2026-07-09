@@ -91,7 +91,13 @@ const App = {
     utterance.rate = 1.05;
     utterance.pitch = 0.95;
     utterance.onstart = () => { this.state.isSpeaking = true; };
-    utterance.onend = () => { this.state.isSpeaking = false; };
+    utterance.onend = () => {
+      this.state.isSpeaking = false;
+      // Auto-restart listening for natural back-and-forth conversation
+      if (this.state.step === 3) {
+        this.startListening();
+      }
+    };
     window.speechSynthesis.speak(utterance);
   },
 
@@ -125,7 +131,7 @@ const App = {
         clearTimeout(silenceTimer);
         silenceTimer = setTimeout(() => {
           if (this.state.isListening) {
-            this.stopListening();
+            this.pauseListening();
             this.handleUserSpeech(finalTranscript.trim());
           }
         }, 800);
@@ -173,8 +179,16 @@ const App = {
     if (this.state.recognition) {
       this.state.isListening = false;
       try { this.state.recognition.stop(); } catch(e) {}
-      document.getElementById('btnStartSpeaking').textContent = '🎤 Start Speaking';
+      document.getElementById('btnStartSpeaking').textContent = '🎤 Start the Call';
       document.getElementById('btnStartSpeaking').classList.remove('btn-danger');
+    }
+  },
+
+  // Pause listening temporarily (while AI processes/speaks) - will auto-restart
+  pauseListening() {
+    this.state.isListening = false;
+    if (this.state.recognition) {
+      try { this.state.recognition.stop(); } catch(e) {}
     }
   },
 
@@ -405,9 +419,13 @@ const App = {
   // ─── CALL HANDLERS ───
   setupCallHandlers() {
     document.getElementById('btnStartSpeaking').addEventListener('click', () => {
-      if (this.state.isListening) {
+      if (this.state.step === 3 && this.state.transcript.length > 0) {
+        // Call is active and user has spoken - end the call
         this.stopListening();
+        if (window.speechSynthesis) window.speechSynthesis.cancel();
+        this.endCall();
       } else {
+        // Start the call
         this.startListening();
       }
     });
@@ -465,7 +483,7 @@ const App = {
       this.addChatMessage('system', 'Role Reversal mode: The AI will now sell to YOU. Play the prospect and watch how it handles objections.');
     } else {
       banner.classList.add('hidden');
-      this.addChatMessage('system', 'Tap "Start Speaking" and deliver your pitch opener. The AI buyer will respond.');
+      this.addChatMessage('system', 'Tap "Start the Call" and begin your pitch. The AI will respond - just talk naturally, no need to tap again. Tap "End Call" when done.');
     }
 
     this.goToStep(3);

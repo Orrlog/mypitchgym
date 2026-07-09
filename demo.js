@@ -74,6 +74,12 @@ const Demo = {
     if (this.state.selectedVoice) utterance.voice = this.state.selectedVoice;
     utterance.rate = 1.05;
     utterance.pitch = 0.95;
+    utterance.onend = () => {
+      // Auto-restart listening for natural conversation
+      if (this.state.callStarted && this.state.timeRemaining > 0) {
+        this.startListening();
+      }
+    };
     window.speechSynthesis.speak(utterance);
   },
 
@@ -103,7 +109,7 @@ const Demo = {
         clearTimeout(silenceTimer);
         silenceTimer = setTimeout(() => {
           if (this.state.isListening) {
-            this.stopListening();
+            this.pauseListening();
             this.handleUserSpeech(finalTranscript.trim());
           }
         }, 800);
@@ -223,7 +229,8 @@ const Demo = {
           product: this.demoProduct,
           script: null,
           customer_type: 'skeptic',
-          sales_style: 'consultative'
+          sales_style: 'consultative',
+          sales_channel: 'phone'
         })
       });
 
@@ -263,7 +270,8 @@ const Demo = {
           product: this.demoProduct,
           script: null,
           customer_type: 'skeptic',
-          sales_style: 'consultative'
+          sales_style: 'consultative',
+          sales_channel: 'phone'
         })
       });
 

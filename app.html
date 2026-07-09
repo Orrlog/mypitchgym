@@ -1,11 +1,10 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>MyPitchGym — Practice</title>
+  <title>MyPitchGym - Practice</title>
   <link rel="stylesheet" href="styles.css">
-  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎙️</text></svg>">
   <style>
     .app-main { padding-top: 90px; min-height: 100vh; background: #0f172a; }
     .app-container { max-width: 800px; margin: 0 auto; padding: 20px; }
@@ -15,13 +14,11 @@
     .back-link { color: #94a3b8; text-decoration: none; font-size: 0.9rem; }
     .back-link:hover { color: #f1f5f9; }
 
-    /* Step indicator */
     .step-indicator { display: flex; gap: 8px; margin-bottom: 30px; }
     .step-dot { width: 10px; height: 10px; border-radius: 50%; background: #334155; }
     .step-dot.active { background: #6366f1; }
     .step-dot.done { background: #22c55e; }
 
-    /* Setup Form */
     .setup-section { display: block; }
     .setup-section.hidden { display: none; }
     .setup-form { display: flex; flex-direction: column; gap: 16px; }
@@ -39,21 +36,9 @@
     .benefit-row { display: flex; gap: 8px; align-items: center; }
     .benefit-row input { flex: 1; }
     .btn-remove { background: none; border: none; color: #ef4444; cursor: pointer; font-size: 1.2rem; padding: 4px; }
-    .btn-add { background: #1e293b; border: 1px dashed #475569; border-radius: 8px;
-      padding: 10px; color: #94a3b8; cursor: pointer; font-size: 0.85rem; text-align: center; }
+    .btn-add { background: #1e293b; border: 1px dashed #475569; border-radius: 8px; padding: 10px; color: #94a3b8; cursor: pointer; font-size: 0.85rem; text-align: center; }
     .btn-add:hover { border-color: #6366f1; color: #6366f1; }
 
-    /* Tabs for script mode */
-    .script-tabs { display: flex; gap: 0; margin-bottom: 12px; background: #1e293b; border-radius: 8px; overflow: hidden; }
-    .script-tab { flex: 1; padding: 10px; text-align: center; cursor: pointer; font-size: 0.85rem; color: #64748b; background: #1e293b; border: none; transition: all 0.2s; }
-    .script-tab.active { background: #6366f1; color: #fff; }
-    .script-tab:hover:not(.active) { color: #cbd5e1; }
-
-    .script-upload-area { display: none; }
-    .script-upload-area.visible { display: block; }
-    .script-upload-area textarea { min-height: 200px; font-family: inherit; }
-
-    /* Script display */
     .script-display { display: none; background: #1e293b; border-radius: 12px; padding: 24px; margin-top: 20px; }
     .script-display.visible { display: block; }
     .script-title { font-size: 1.1rem; font-weight: 700; color: #f1f5f9; margin-bottom: 16px; }
@@ -63,16 +48,6 @@
     .script-section p { color: #cbd5e1; line-height: 1.6; white-space: pre-wrap; font-size: 0.9rem; }
     .script-actions { display: flex; gap: 10px; margin-top: 20px; flex-wrap: wrap; }
 
-    /* Comparison view */
-    .comparison { display: none; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 20px; }
-    .comparison.visible { display: grid; }
-    .compare-col { background: #1e293b; border-radius: 12px; padding: 20px; }
-    .compare-col h4 { font-size: 0.85rem; color: #94a3b8; margin-bottom: 12px; text-transform: uppercase; letter-spacing: 1px; }
-    .compare-col.original h4 { color: #f87171; }
-    .compare-col.improved h4 { color: #22c55e; }
-    .compare-col pre { white-space: pre-wrap; color: #e2e8f0; font-size: 0.85rem; line-height: 1.6; font-family: inherit; }
-
-    /* Call simulation */
     .call-section { display: none; }
     .call-section.visible { display: block; }
     .call-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
@@ -84,23 +59,12 @@
     .call-bubble.ai { align-self: flex-start; background: #334155; color: #e2e8f0; border-bottom-left-radius: 4px; }
     .call-bubble.user { align-self: flex-end; background: #6366f1; color: #fff; border-bottom-right-radius: 4px; }
     .call-bubble.system { align-self: center; background: none; color: #64748b; font-size: 0.8rem; font-style: italic; }
-    .call-input-area { display: flex; gap: 10px; }
-    .call-input-area input { flex: 1; background: #1e293b; border: 1px solid #334155; border-radius: 8px; padding: 12px 14px; color: #f1f5f9; font-size: 0.95rem; }
-    .call-input-area input:focus { outline: none; border-color: #6366f1; }
-    .call-voice-toggle { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
-    .call-voice-toggle label { color: #94a3b8; font-size: 0.85rem; cursor: pointer; }
-    .toggle-switch { width: 40px; height: 22px; background: #334155; border-radius: 11px; position: relative; cursor: pointer; transition: 0.2s; }
-    .toggle-switch.active { background: #6366f1; }
-    .toggle-switch::after { content: ''; position: absolute; width: 18px; height: 18px; border-radius: 50%; background: #fff; top: 2px; left: 2px; transition: 0.2s; }
-    .toggle-switch.active::after { left: 20px; }
 
-    /* Role reversal */
     .role-reversal-banner { background: linear-gradient(135deg, #1e293b, #312e81); border-radius: 12px; padding: 20px; margin-bottom: 16px; text-align: center; }
     .role-reversal-banner h3 { color: #f1f5f9; margin-bottom: 6px; }
     .role-reversal-banner p { color: #94a3b8; font-size: 0.85rem; margin-bottom: 12px; }
     .role-reversal-banner .badge { display: inline-block; background: #6366f1; padding: 3px 10px; border-radius: 20px; font-size: 0.75rem; color: #fff; margin-bottom: 8px; }
 
-    /* Coaching */
     .coaching-display { display: none; background: #1e293b; border-radius: 12px; padding: 24px; margin-top: 20px; }
     .coaching-display.visible { display: block; }
     .coaching-score { display: flex; align-items: center; gap: 16px; margin-bottom: 20px; }
@@ -110,10 +74,11 @@
     .score-circle.weak { background: #ef4444; }
     .coaching-list { display: flex; flex-direction: column; gap: 12px; }
     .coaching-item { display: flex; gap: 10px; align-items: flex-start; }
-    .coaching-item .icon { font-size: 1.1rem; }
+    .coaching-item .icon { font-size: 0.8rem; font-weight: 700; color: #6366f1; min-width: 50px; }
     .coaching-item .text { color: #cbd5e1; font-size: 0.9rem; line-height: 1.5; }
+    .retry-btn { background: #6366f1; color: #fff; border: none; padding: 8px 16px; border-radius: 8px; font-size: 0.8rem; font-weight: 600; cursor: pointer; margin-top: 6px; }
+    .retry-btn:hover { background: #4f46e5; }
 
-    /* Paywall */
     .paywall-overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.7); z-index: 1000; justify-content: center; align-items: center; }
     .paywall-overlay.visible { display: flex; }
     .paywall-modal { background: #1e293b; border-radius: 16px; padding: 40px; max-width: 400px; width: 90%; text-align: center; position: relative; }
@@ -123,7 +88,6 @@
     .btn-stripe:hover { background: #4f46e5; }
     .btn-stripe:disabled { opacity: 0.5; cursor: not-allowed; }
 
-    /* Shared buttons */
     .btn-primary { background: #6366f1; color: #fff; border: none; padding: 12px 24px; border-radius: 8px; font-size: 0.95rem; font-weight: 600; cursor: pointer; }
     .btn-primary:hover { background: #4f46e5; }
     .btn-secondary { background: #334155; color: #cbd5e1; border: none; padding: 12px 24px; border-radius: 8px; font-size: 0.95rem; cursor: pointer; }
@@ -135,15 +99,15 @@
     .btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
     .hidden { display: none !important; }
-    .loading::after { content: '...'; animation: dots 1.5s infinite; }
-    @keyframes dots { 0% { content: '.'; } 33% { content: '..'; } 66% { content: '...'; } }
-
     .error-msg { color: #ef4444; font-size: 0.85rem; margin-top: 8px; }
 
-    /* Mobile */
+    .preparing { display: none; text-align: center; padding: 40px; }
+    .preparing.visible { display: block; }
+    .preparing .spinner { width: 48px; height: 48px; border: 4px solid #334155; border-top-color: #6366f1; border-radius: 50%; animation: spin 1s linear infinite; margin: 0 auto 16px; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
     @media (max-width: 600px) {
       .form-row { grid-template-columns: 1fr; }
-      .comparison.visible { grid-template-columns: 1fr; }
       .app-header-bar { flex-direction: column; gap: 10px; align-items: flex-start; }
       .call-chat { max-height: 280px; }
       .paywall-modal { padding: 24px; }
@@ -155,10 +119,9 @@
     <div class="app-container">
       <div class="app-header-bar">
         <div class="app-logo">My<span>Pitch</span>Gym</div>
-        <a href="/" class="back-link">← Back to home</a>
+        <a href="/" class="back-link">&larr; Back to home</a>
       </div>
 
-      <!-- Step dots -->
       <div class="step-indicator" id="stepDots">
         <div class="step-dot active" data-step="1"></div>
         <div class="step-dot" data-step="2"></div>
@@ -177,27 +140,27 @@
           <div class="form-row">
             <div class="form-group">
               <label for="priceRange">Price range</label>
-              <input type="text" id="priceRange" placeholder="e.g. $15,000–$25,000">
+              <input type="text" id="priceRange" placeholder="e.g. $15,000-$25,000">
             </div>
             <div class="form-group">
-              <label for="salesStyle">Sales style</label>
-              <select id="salesStyle">
-                <option value="consultative">Consultative — Ask first, diagnose, prescribe</option>
-                <option value="direct">Direct Response — Hook, value stack, hard close</option>
-                <option value="neuro-engagement">Neuro-Engagement — Questions that bypass resistance</option>
-                <option value="challenger">Challenger — Teach, tailor, take control</option>
-                <option value="pain-first">Pain-First — Find the pain before pitching</option>
-                <option value="rapport">Rapport &amp; Influence — Mirror, pace, anchor, lead</option>
-                <option value="linear">Linear Persuasion — Build certainty, keep them on the line</option>
+              <label for="salesChannel">How do you sell?</label>
+              <select id="salesChannel">
+                <option value="phone">Phone Call - Cold calling or scheduled call</option>
+                <option value="in_person">In Person - Walk into a business or office</option>
+                <option value="door">Door-to-Door - Knock and introduce at their home</option>
               </select>
             </div>
+          </div>
+          <div class="form-group">
+            <label for="productUrl">Your product page URL (optional - AI will read it for better objections)</label>
+            <input type="url" id="productUrl" placeholder="https://your-product-page.com">
           </div>
           <div class="form-group">
             <label>Benefits (what's in it for them?)</label>
             <div id="benefitsContainer">
               <div class="benefit-row">
                 <input type="text" class="benefit-input" placeholder="e.g. Cuts electric bill 60-80%">
-                <button class="btn-remove hidden">×</button>
+                <button class="btn-remove hidden">x</button>
               </div>
             </div>
             <button id="addBenefitBtn" class="btn-add" style="margin-top:8px;">+ Add another benefit</button>
@@ -210,127 +173,77 @@
             <label for="extraContext">Any other context? (optional)</label>
             <textarea id="extraContext" placeholder="e.g. We offer free consultations, 25-year warranty, 0% financing"></textarea>
           </div>
-
-          <!-- Script source tabs -->
           <div class="form-group">
-            <label>Your script</label>
-            <div class="script-tabs">
-              <button class="script-tab active" data-mode="generate" id="tabGenerate">Generate New</button>
-              <button class="script-tab" data-mode="upload" id="tabUpload">Upload Mine</button>
+            <label>Your script (optional - paste it so the AI coach knows how to critique you)</label>
+            <textarea id="userScript" placeholder="Paste your existing script here if you have one..." style="min-height:120px;"></textarea>
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label for="customerType">Customer type to practice against</label>
+              <select id="customerType">
+                <option value="skeptic">The Skeptic - "Why are you different?"</option>
+                <option value="price_shopper">The Price Shopper - "Your competitor is cheaper"</option>
+                <option value="hostile">The Hostile - "I didn't ask for this call"</option>
+                <option value="impatient">The Impatient - "Make it quick"</option>
+                <option value="noncommittal">The Noncommittal - "Let me think about it"</option>
+                <option value="detail">The Detail-Driven - "Walk me through exactly how this works"</option>
+              </select>
             </div>
-            <div class="script-upload-area" id="scriptUploadArea">
-              <textarea id="userScript" placeholder="Paste your existing script here..."></textarea>
+            <div class="form-group">
+              <label for="difficulty">Difficulty level</label>
+              <select id="difficulty">
+                <option value="beginner">Beginner - Forgiving buyer, gentle feedback</option>
+                <option value="pro">Pro - Ruthless buyer, interrupts, hangs up if you're bad</option>
+              </select>
             </div>
           </div>
 
-          <div class="form-group">
-            <label for="customerType">Customer type to practice against</label>
-            <select id="customerType">
-              <option value="skeptic">The Skeptic — "Why are you different?"</option>
-              <option value="price_shopper">The Price Shopper — "Your competitor is cheaper"</option>
-              <option value="hostile">The Hostile — "I didn't ask for this call"</option>
-              <option value="impatient">The Impatient — "Make it quick"</option>
-              <option value="noncommittal">The Noncommittal — "Let me think about it"</option>
-              <option value="detail">The Detail-Driven — "Walk me through exactly how this works"</option>
-            </select>
-          </div>
-
-          <div class="form-group">
-            <label for="difficulty">Difficulty level</label>
-            <select id="difficulty">
-              <option value="beginner">Beginner — Forgiving buyer, gentle feedback, second chances</option>
-              <option value="pro">Pro — Ruthless buyer, interrupts, hangs up if you're bad</option>
-            </select>
-          <div class="form-group" style="margin-top:16px;">
-            <label for="salesChannel">How do you sell?</label>
-            <select id="salesChannel">
-              <option value="phone">Phone Call — Cold calling or scheduled call</option>
-              <option value="in_person">In Person — Walk into a business or office</option>
-              <option value="door">Door-to-Door — Knock and introduce at their home</option>
-            </select>
-          </div>
-          </div>
-
-          <button id="btnGenerateScript" class="btn-primary btn-block">Generate My Script →</button>
+          <button id="btnStartCall" class="btn-primary btn-block">Start Practice Call</button>
           <div id="generateError" class="error-msg hidden"></div>
         </div>
       </div>
 
-      <!-- STEP 2: Script Display -->
-      <div class="script-display" id="step2">
-        <div class="script-title">Your <span>Custom Script</span></div>
-        <div id="scriptContent"></div>
-        <div class="comparison" id="comparisonView">
-          <div class="compare-col original">
-            <h4>Your Original</h4>
-            <pre id="originalScript"></pre>
-          </div>
-          <div class="compare-col improved">
-            <h4>AI Improved</h4>
-            <pre id="improvedScript"></pre>
-          </div>
-        </div>
-        <div class="script-actions">
-          <button id="btnImproveScript" class="btn-primary btn-sm">💡 Improve This Script</button>
-          <button id="btnStartCall" class="btn-primary btn-sm">🎤 Start Practice Call</button>
-          <button id="btnRoleReverse" class="btn-secondary btn-sm">🔄 Watch AI Do It</button>
-          <button id="btnBackSetup" class="btn-secondary btn-sm">← Edit Setup</button>
-        </div>
-      </div>
-
-      <!-- STEP 3: Call -->
-      <div class="call-section" id="step3">
+      <!-- STEP 2: Call -->
+      <div class="call-section" id="step2">
         <div class="call-header">
           <div class="call-status">
-            <span class="pulse"></span> <span id="callStatusLabel">Live Call</span>
+            <span class="pulse"></span> <span id="callStatusLabel">Connecting...</span>
           </div>
-          <div>
-            <button id="btnEndCall" class="btn-danger btn-sm">End Call</button>
-          </div>
+          <button id="btnEndCall" class="btn-danger btn-sm">End Call</button>
         </div>
         <div class="role-reversal-banner hidden" id="roleReverseBanner">
-          <div class="badge">🎯 Role Reversal</div>
+          <div class="badge">Role Reversal</div>
           <h3>Watch how a pro handles this prospect</h3>
-          <p>The AI is now selling to YOU. Listen and learn how it handles objections using your script.</p>
+          <p>The AI is now selling to YOU. Listen and learn how it handles objections.</p>
         </div>
         <div class="call-chat" id="callChat">
-          <div class="call-bubble system">Tap "Start Speaking" and begin your pitch. The AI buyer will respond.</div>
+          <div class="call-bubble system">Connecting your call...</div>
         </div>
-        <div class="call-voice-toggle">
-          <span style="color:#94a3b8;font-size:0.85rem;">Voice Mode</span>
-          <div class="toggle-switch active" id="voiceToggle"></div>
-          <span id="voiceStatus" style="color:#22c55e;font-size:0.85rem;">ON</span>
-        </div>
-        <div class="call-input-area" id="textInputArea">
-          <input type="text" id="textInput" placeholder="Type your response..." disabled>
-          <button id="btnSendText" class="btn-primary btn-sm" disabled>Send</button>
-        </div>
-        <button id="btnStartSpeaking" class="btn-primary btn-block" style="margin-top:8px;">🎤 Start Speaking</button>
         <div id="voiceError" class="error-msg hidden"></div>
       </div>
 
-      <!-- STEP 4: Coaching -->
-      <div class="coaching-display" id="step4">
+      <!-- STEP 3: Coaching -->
+      <div class="coaching-display" id="step3">
         <div class="script-title">Your <span>Practice Report</span></div>
         <div class="coaching-score" id="coachingScore"></div>
         <div class="coaching-list" id="coachingList"></div>
         <div class="script-actions" style="margin-top:20px;">
-          <button id="btnPracticeAgain" class="btn-primary">Practice Again →</button>
+          <button id="btnPracticeAgain" class="btn-primary">Practice Again</button>
           <button id="btnNewSetup" class="btn-secondary">New Product Setup</button>
-          <button id="btnRoleReverseAfter" class="btn-secondary">🔄 Watch AI Do It</button>
+          <button id="btnRoleReverseAfter" class="btn-secondary">Watch AI Do It</button>
         </div>
       </div>
 
       <!-- PAYWALL -->
       <div class="paywall-overlay" id="paywall">
         <div class="paywall-modal">
-          <button id="btnClosePaywall" style="position:absolute;top:12px;right:16px;background:none;border:none;color:#64748b;font-size:1.5rem;cursor:pointer;">×</button>
-        <h2>🎯 Ready to Master Your Pitch?</h2>
+          <button id="btnClosePaywall" style="position:absolute;top:12px;right:16px;background:none;border:none;color:#64748b;font-size:1.5rem;cursor:pointer;">x</button>
+          <h2>Ready to Master Your Pitch?</h2>
           <p>Start your <strong>7-day free trial</strong>. Card required, but you won't be charged for 7 days. Cancel anytime before then and pay nothing.</p>
           <p style="font-size:1.4rem;font-weight:700;color:#f1f5f9;">$29<span style="font-size:0.9rem;color:#94a3b8;">/month</span></p>
-          <p style="font-size:0.85rem;color:#94a3b8;">Unlimited practice. All 7 sales styles. All 6 customer types. Role reversal mode. Post-call coaching.</p>
+          <p style="font-size:0.85rem;color:#94a3b8;">Unlimited practice. All 6 customer types. Role reversal mode. Post-call coaching.</p>
           <button id="btnSubscribe" class="btn-stripe">Start 7-Day Free Trial</button>
-          <p style="font-size:0.8rem;color:#64748b;margin-top:12px;">No refunds. Cancel anytime to stop future charges. Secure checkout via Stripe.</p>
+          <p style="font-size:0.8rem;color:#64748b;margin-top:12px;">No refunds. Cancel anytime. Secure checkout via Stripe.</p>
         </div>
       </div>
 

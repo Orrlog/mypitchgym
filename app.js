@@ -1,42 +1,29 @@
-﻿// MyPitchGym - Frontend Application Logic
+﻿// MyPitchGym - Frontend Application Logic (Realtime API voice)
 
 const App = {
   state: {
     step: 1,
     product: null,
     script: null,
-    originalScript: null,
-    improvedScript: null,
+    transcript: [],
     isSubscribed: false,
     callMode: 'roleplay',
-    transcript: [],
-    isListening: false,
-    isSpeaking: false,
-    isProcessing: false,
-    canCapture: false,
     callActive: false,
-    recognition: null,
-    voiceEnabled: true,
-    selectedVoice: null,
-    finalText: '',
-    silenceTimer: null,
-    restartTimer: null
+    callTimer: null,
+    callStartTime: 0,
+    peerConnection: null,
+    dataChannel: null,
+    audioContext: null,
+    remoteAudio: null,
+    localStream: null,
+    realtimeSession: null,
+    coachingData: null
   },
 
   init() {
-    if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
-      const ve = document.getElementById('voiceError');
-      if (ve) { ve.textContent = 'Voice recognition needs Chrome browser. You can type your responses below.'; ve.classList.remove('hidden'); }
-      const ti = document.getElementById('textInput');
-      const bs = document.getElementById('btnSendText');
-      if (ti) ti.disabled = false;
-      if (bs) bs.disabled = false;
-    }
     this.setupFormHandlers();
     this.setupCallHandlers();
     this.setupScriptHandlers();
-    this.setupVoiceHandlers();
-    this.loadVoices();
     this.loadSubscriptionStatus();
   },
 
@@ -61,148 +48,6 @@ const App = {
   showPaywall() { document.getElementById('paywall').classList.add('visible'); },
   hidePaywall() { document.getElementById('paywall').classList.remove('visible'); },
 
-  loadVoices() {
-    const voices = window.speechSynthesis ? window.speechSynthesis.getVoices() : [];
-    this.state.selectedVoice = voices.find(v => v.name.includes('Google US English')) || voices.find(v => v.name.includes('Samantha')) || voices.find(v => v.lang.startsWith('en')) || voices[0] || null;
-    if (window.speechSynthesis) {
-      window.speechSynthesis.onvoiceschanged = () => {
-        const all = window.speechSynthesis.getVoices();
-        this.state.selectedVoice = all.find(v => v.name.includes('Google US English')) || all.find(v => v.name.includes('Samantha')) || all.find(v => v.lang.startsWith('en')) || all[0] || null;
-      };
-    }
-  },
-
-  speak(text) {
-    if (!this.state.voiceEnabled || !window.speechSynthesis) {
-      this.state.isSpeaking = false;
-      this.state.canCapture = true;
-      this.startRecognition();
-      return;
-    }
-    // Don't stop recognition - just mute capture so we don't hear ourselves
-    this.state.canCapture = false;
-    window.speechSynthesis.cancel();
-    const u = new SpeechSynthesisUtterance(text);
-    if (this.state.selectedVoice) u.voice = this.state.selectedVoice;
-    u.rate = 1.05;
-    u.pitch = 0.95;
-    u.onstart = () => { this.state.isSpeaking = true; this.updateCallStatus('AI is speaking...'); };
-    u.onend = () => {
-      this.state.isSpeaking = false;
-      this.state.canCapture = true;
-      this.updateCallStatus('Your turn - just talk');
-      this.startRecognition();
-    };
-    u.onerror = () => {
-      this.state.isSpeaking = false;
-      this.state.canCapture = true;
-      this.startRecognition();
-    };
-    window.speechSynthesis.speak(u);
-  },
-
-  initSpeechRecognition() {
-    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!SR) return false;
-    this.state.recognition = new SR();
-    this.state.recognition.continuous = true;
-    this.state.recognition.interimResults = true;
-    this.state.recognition.lang = 'en-US';
-
-    this.state.recognition.onresult = (event) => {
-      if (this.state.isSpeaking || this.state.isProcessing || !this.state.canCapture) return;
-      let interim = '';
-      this.state.finalText = '';
-      for (let i = event.resultIndex; i < event.results.length; i++) {
-        const t = event.results[i][0].transcript;
-        if (event.results[i].isFinal) { this.state.finalText += t; } else { interim += t; }
-      }
-      if (interim) { this.updateCallStatus('Hearing: "' + interim.substring(0, 40) + '..."'); }
-      if (this.state.finalText) {
-        clearTimeout(this.state.silenceTimer);
-        this.state.silenceTimer = setTimeout(() => {
-          if (this.state.finalText.trim() && this.state.canCapture && !this.state.isProcessing) {
-            this.state.canCapture = false;
-            this.state.isProcessing = true;
-            this.pauseRecognition();
-            this.handleUserSpeech(this.state.finalText.trim());
-          }
-        }, 800);
-      }
-    };
-
-    this.state.recognition.onerror = (event) => {
-      if (event.error === 'no-speech') return;
-      if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
-        const ve = document.getElementById('voiceError');
-        if (ve) { ve.textContent = 'Mic blocked. Type your responses below.'; ve.classList.remove('hidden'); }
-        const ti = document.getElementById('textInput');
-        const bs = document.getElementById('btnSendText');
-        if (ti) ti.disabled = false;
-        if (bs) bs.disabled = false;
-      }
-    };
-
-    this.state.recognition.onend = () => {
-      this.state.isListening = false;
-      if (this.state.callActive && !this.state.isSpeaking && !this.state.isProcessing) {
-        clearTimeout(this.state.restartTimer);
-        this.state.restartTimer = setTimeout(() => {
-          if (this.state.callActive && !this.state.isSpeaking && !this.state.isProcessing) {
-            this.startRecognition();
-          }
-        }, 200);
-      }
-    };
-
-    return true;
-  },
-
-  startRecognition() {
-    if (!this.state.recognition || !this.state.callActive) return;
-    if (this.state.isListening) return;
-    try {
-      this.state.recognition.start();
-      this.state.isListening = true;
-    } catch(e) {
-      if (e.message && e.message.includes('already started')) { this.state.isListening = true; }
-    }
-  },
-
-  pauseRecognition() {
-    if (this.state.recognition && this.state.isListening) {
-      try { this.state.recognition.stop(); } catch(e) {}
-      this.state.isListening = false;
-    }
-  },
-
-  startListening() {
-    if (!this.state.recognition && !this.initSpeechRecognition()) {
-      const ti = document.getElementById('textInput');
-      const bs = document.getElementById('btnSendText');
-      if (ti) ti.disabled = false;
-      if (bs) bs.disabled = false;
-      return;
-    }
-    this.state.callActive = true;
-    this.state.canCapture = true;
-    this.state.isProcessing = false;
-    this.startRecognition();
-
-    document.getElementById('btnStartSpeaking').textContent = 'End Call';
-    document.getElementById('btnStartSpeaking').classList.add('btn-danger');
-    this.updateCallStatus('Listening - talk whenever you are ready');
-  },
-
-  stopListening() {
-    this.state.isListening = false;
-    this.state.callActive = false;
-    this.state.canCapture = false;
-    if (this.state.recognition) { try { this.state.recognition.stop(); } catch(e) {} }
-    document.getElementById('btnStartSpeaking').textContent = 'Start Speaking';
-    document.getElementById('btnStartSpeaking').classList.remove('btn-danger');
-  },
-
   setupFormHandlers() {
     document.getElementById('addBenefitBtn').addEventListener('click', () => {
       const c = document.getElementById('benefitsContainer');
@@ -214,15 +59,6 @@ const App = {
     });
     document.getElementById('benefitsContainer').addEventListener('click', (e) => {
       if (e.target.classList.contains('btn-remove')) { e.target.parentElement.remove(); this.updateRemoveButtons(); }
-    });
-    document.querySelectorAll('.script-tab').forEach(tab => {
-      tab.addEventListener('click', () => {
-        document.querySelectorAll('.script-tab').forEach(t => t.classList.remove('active'));
-        tab.classList.add('active');
-        const mode = tab.dataset.mode;
-        const ua = document.getElementById('scriptUploadArea');
-        if (mode === 'upload') { ua.classList.add('visible'); } else { ua.classList.remove('visible'); }
-      });
     });
     const cp = document.getElementById('btnClosePaywall');
     if (cp) { cp.addEventListener('click', () => this.hidePaywall()); }
@@ -237,329 +73,314 @@ const App = {
   },
 
   setupScriptHandlers() {
-    document.getElementById('btnGenerateScript').addEventListener('click', () => this.generateScript());
-    document.getElementById('btnImproveScript').addEventListener('click', () => this.improveScript());
-    document.getElementById('btnStartCall').addEventListener('click', () => this.startCall('roleplay'));
-    document.getElementById('btnRoleReverse').addEventListener('click', () => this.startCall('reversal'));
-    document.getElementById('btnRoleReverseAfter').addEventListener('click', () => this.startCall('reversal'));
-    document.getElementById('btnBackSetup').addEventListener('click', () => this.goToStep(1));
     document.getElementById('btnPracticeAgain').addEventListener('click', () => this.startCall('roleplay'));
-    document.getElementById('btnNewSetup').addEventListener('click', () => { this.goToStep(1); this.state.script = null; this.state.transcript = []; });
+    document.getElementById('btnNewSetup').addEventListener('click', () => {
+      this.goToStep(1);
+      this.state.script = null;
+      this.state.transcript = [];
+    });
+    document.getElementById('btnRoleReverseAfter').addEventListener('click', () => this.startCall('reversal'));
     document.getElementById('btnSubscribe').addEventListener('click', () => this.handleSubscription());
   },
 
-  async generateScript() {
+  setupCallHandlers() {
+    document.getElementById('btnStartCall').addEventListener('click', () => this.startCall('roleplay'));
+    document.getElementById('btnEndCall').addEventListener('click', () => this.endCall());
+  },
+
+  async collectFormData() {
     const productName = document.getElementById('productName').value.trim();
-    if (!productName) { this.showError('generateError', 'Please tell us what you sell.'); return; }
+    if (!productName) { this.showError('Please tell us what you sell.'); return null; }
     const benefits = Array.from(document.querySelectorAll('.benefit-input')).map(i => i.value.trim()).filter(Boolean);
-    const data = {
+    const product = {
       product_name: productName,
       price_range: document.getElementById('priceRange').value.trim(),
       benefits: benefits,
       objections: document.getElementById('objections').value.trim(),
       extra_context: document.getElementById('extraContext').value.trim(),
-      sales_style: document.getElementById('salesStyle').value,
       customer_type: document.getElementById('customerType').value,
       difficulty: document.getElementById('difficulty').value,
       sales_channel: document.getElementById('salesChannel').value
     };
-    const ua = document.getElementById('scriptUploadArea');
-    if (ua.classList.contains('visible')) {
-      data.user_script = document.getElementById('userScript').value.trim();
-      if (!data.user_script) { this.showError('generateError', 'Please paste your script or switch to "Generate New".'); return; }
-    }
-    this.state.product = data;
-    const btn = document.getElementById('btnGenerateScript');
-    btn.disabled = true;
-    btn.innerHTML = 'Generating...';
+    this.state.product = product;
+    this.state.script = document.getElementById('userScript').value.trim() || null;
+    return product;
+  },
+
+  async fetchUrlContent(url) {
+    if (!url) return null;
     try {
-      const response = await fetch('/api/generate-script', {
+      this.updateCallStatus('Reading your product page...');
+      const response = await fetch('/api/fetch-url', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(data)
+        body: JSON.stringify({ url: url })
       });
-      if (!response.ok) { const err = await response.json().catch(() => ({})); throw new Error(err.error || 'Failed to generate script'); }
+      if (!response.ok) return null;
       const result = await response.json();
-      this.state.script = result.script;
-      this.state.originalScript = data.user_script || null;
-      this.displayScript(result.script);
-      this.goToStep(2);
+      return result.content || null;
     } catch (err) {
-      console.error('Script generation error:', err);
-      this.showError('generateError', err.message || 'Something went wrong. Please try again.');
-    } finally {
-      btn.disabled = false;
-      btn.textContent = 'Generate My Script';
+      return null;
     }
   },
 
-  displayScript(script) {
-    const container = document.getElementById('scriptContent');
-    container.innerHTML = '';
-    if (typeof script === 'string') {
-      const div = document.createElement('div');
-      div.className = 'script-section';
-      div.innerHTML = '<h4>Your Script</h4><p>' + this.escapeHtml(script) + '</p>';
-      container.appendChild(div);
-      return;
-    }
-    if (script.full_script && !script.opener) {
-      const div = document.createElement('div');
-      div.className = 'script-section';
-      div.innerHTML = '<h4>Your Script</h4><p>' + this.escapeHtml(script.full_script) + '</p>';
-      container.appendChild(div);
-      return;
-    }
-    const sections = [
-      { key: 'opener', label: 'Opener' },
-      { key: 'discovery', label: 'Discovery Questions' },
-      { key: 'benefits', label: 'Benefit Talking Points' },
-      { key: 'objection_handling', label: 'Objection Handling' },
-      { key: 'close', label: 'Close' }
-    ];
-    sections.forEach(section => {
-      if (script[section.key]) {
-        const div = document.createElement('div');
-        div.className = 'script-section';
-        div.innerHTML = '<h4>' + section.label + '</h4><p>' + this.escapeHtml(script[section.key]) + '</p>';
-        container.appendChild(div);
-      }
-    });
-  },
-
-  escapeHtml(text) {
-    const div = document.createElement('div');
-    div.textContent = text;
-    return div.innerHTML;
-  },
-
-  async improveScript() {
-    const btn = document.getElementById('btnImproveScript');
-    btn.disabled = true;
-    btn.innerHTML = 'Improving...';
-    try {
-      const response = await fetch('/api/improve-script', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ script: this.state.script, original_script: this.state.originalScript, product: this.state.product })
-      });
-      if (!response.ok) { const err = await response.json().catch(() => ({})); throw new Error(err.error || 'Failed to improve script'); }
-      const result = await response.json();
-      document.getElementById('originalScript').textContent = this.state.originalScript || this.scriptToText(this.state.script);
-      document.getElementById('improvedScript').textContent = result.improved_script;
-      document.getElementById('comparisonView').classList.add('visible');
-      if (result.improved_script_parsed) { this.state.script = result.improved_script_parsed; this.displayScript(result.improved_script_parsed); }
-      else { this.state.script = result.improved_script; this.displayScript(result.improved_script); }
-      this.state.improvedScript = result.improved_script;
-    } catch (err) {
-      console.error('Improve script error:', err);
-      this.showError('generateError', err.message || 'Could not improve the script. Please try again.');
-    } finally {
-      btn.disabled = false;
-      btn.textContent = 'Improve This Script';
-    }
-  },
-
-  scriptToText(script) {
-    if (typeof script === 'string') return script;
-    return Object.entries(script).map(([k, v]) => k + ': ' + v).join('\n\n');
-  },
-
-  setupCallHandlers() {
-    document.getElementById('btnStartSpeaking').addEventListener('click', () => {
-      // FIX: if call is active, ALWAYS end it
-      if (this.state.callActive) {
-        this.endCall();
-      } else {
-        this.startListening();
-      }
-    });
-    document.getElementById('btnEndCall').addEventListener('click', () => this.endCall());
-    document.getElementById('btnSendText').addEventListener('click', () => {
-      const input = document.getElementById('textInput');
-      const text = input.value.trim();
-      if (text && this.state.callActive && !this.state.isProcessing && !this.state.isSpeaking) {
-        input.value = '';
-        this.state.canCapture = false;
-        this.state.isProcessing = true;
-        this.pauseRecognition();
-        this.handleUserSpeech(text);
-      }
-    });
-    document.getElementById('textInput').addEventListener('keypress', (e) => {
-      if (e.key === 'Enter') { document.getElementById('btnSendText').click(); }
-    });
-    document.getElementById('voiceToggle').addEventListener('click', () => {
-      this.state.voiceEnabled = !this.state.voiceEnabled;
-      const toggle = document.getElementById('voiceToggle');
-      const status = document.getElementById('voiceStatus');
-      if (this.state.voiceEnabled) { toggle.classList.add('active'); status.textContent = 'ON'; status.style.color = '#22c55e'; }
-      else { toggle.classList.remove('active'); status.textContent = 'OFF'; status.style.color = '#64748b'; }
-      if (!this.state.voiceEnabled && window.speechSynthesis) { window.speechSynthesis.cancel(); }
-    });
-  },
-
-  setupVoiceHandlers() {
-    if (window.speechSynthesis) { window.speechSynthesis.getVoices(); }
-  },
-
-  startCall(mode) {
+  async startCall(mode) {
     this.state.callMode = mode;
     this.state.transcript = [];
-    this.state.callActive = true;
-    this.state.canCapture = false;
-    this.state.isProcessing = false;
-    this.state.isSpeaking = false;
-    this.state.finalText = '';
-    document.getElementById('callChat').innerHTML = '';
+    this.state.callActive = false;
 
-    // Enable text input always as fallback
-    const ti = document.getElementById('textInput');
-    const bs = document.getElementById('btnSendText');
-    if (ti) ti.disabled = false;
-    if (bs) bs.disabled = false;
+    if (mode === 'roleplay' && this.state.step === 1) {
+      const product = await this.collectFormData();
+      if (!product) return;
+      const url = document.getElementById('productUrl').value.trim();
+      if (url) {
+        product.product_url = url;
+        const content = await this.fetchUrlContent(url);
+        if (content) product.product_url_content = content;
+      }
+    }
 
     const banner = document.getElementById('roleReverseBanner');
     if (mode === 'reversal') {
       banner.classList.remove('hidden');
-      this.addChatMessage('system', 'Role Reversal: The AI will pitch to YOU. Play the prospect.');
     } else {
       banner.classList.add('hidden');
-      this.addChatMessage('system', 'Calling... connecting you now.');
     }
 
-    this.goToStep(3);
+    this.goToStep(2);
+    document.getElementById('callChat').innerHTML = '';
+    this.addChatMessage('system', mode === 'reversal' ? 'AI is preparing to pitch to you...' : 'Connecting your call...');
+    this.updateCallStatus('Connecting...');
 
-    // START MIC IMMEDIATELY - Chrome requires user gesture for mic permission
-    this.initSpeechRecognition();
-    this.startRecognition();
-
-    if (mode === 'reversal') {
-      setTimeout(() => this.startRoleReversal(), 500);
-    } else {
-      // Prospect answers the phone after a delay
-      setTimeout(() => {
-        if (!this.state.callActive) return;
-        this.prospectAnswers();
-      }, 1000);
-    }
-  },
-
-  prospectAnswers() {
-    const greeting = "Hello?";
-    this.addChatMessage('ai', greeting);
-    this.state.transcript.push({ role: 'assistant', content: greeting });
-    document.getElementById('btnStartSpeaking').textContent = 'End Call';
-    document.getElementById('btnStartSpeaking').classList.add('btn-danger');
-    this.updateCallStatus('AI speaking...');
-    this.speak(greeting);
-
-    // After greeting, enable user to talk
-    setTimeout(() => {
-      if (!this.state.callActive) return;
-      this.state.canCapture = true;
-      this.startRecognition();
-      this.updateCallStatus('Your turn - just talk');
-    }, 1800);
-  },
-
-  async startRoleReversal() {
-    this.addChatMessage('ai', '...');
-    this.addChatMessage('system', 'AI is preparing to pitch...');
     try {
-      const response = await fetch('/api/roleplay', {
+      // Get ephemeral session token from server
+      const sessionResponse = await fetch('/api/realtime-session', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          mode: 'reversal_start',
           product: this.state.product,
           script: this.state.script,
           customer_type: this.state.product.customer_type,
-          sales_style: this.state.product.sales_style,
-          sales_channel: this.state.product.sales_channel
+          sales_channel: this.state.product.sales_channel,
+          difficulty: this.state.product.difficulty,
+          mode: mode,
+          product_url_content: this.state.product.product_url_content
         })
       });
-      if (!response.ok) { const err = await response.json().catch(() => ({})); throw new Error(err.error || 'Failed'); }
-      const result = await response.json();
-      document.getElementById('callChat').innerHTML = '';
-      this.addChatMessage('system', 'The AI is now the salesperson. Respond as the prospect.');
-      this.addChatMessage('ai', result.message);
-      this.speak(result.message);
-      this.state.transcript.push({ role: 'assistant', content: result.message });
-      // Enable user input after AI speaks
-      this.state.callActive = true;
-      this.state.canCapture = true;
-      this.startRecognition();
-      document.getElementById('btnStartSpeaking').textContent = 'End Call';
-      document.getElementById('btnStartSpeaking').classList.add('btn-danger');
+
+      if (!sessionResponse.ok) {
+        const err = await sessionResponse.json().catch(() => ({}));
+        throw new Error(err.error || 'Failed to create session');
+      }
+
+      const sessionData = await sessionResponse.json();
+      this.state.realtimeSession = sessionData;
+
+      // Connect via WebRTC
+      await this.connectRealtime(sessionData.client_secret, mode);
+
     } catch (err) {
-      console.error('Role reversal error:', err);
-      document.getElementById('callChat').innerHTML = '';
-      this.addChatMessage('system', 'Could not start. Please try again.');
+      console.error('Call start error:', err);
+      this.addChatMessage('system', 'Failed to connect: ' + err.message);
+      this.updateCallStatus('Connection failed');
     }
   },
 
-  async handleUserSpeech(text) {
-    if (!text || !text.trim()) {
-      this.state.isProcessing = false;
-      this.state.canCapture = true;
-      this.startRecognition();
+  async connectRealtime(clientSecret, mode) {
+    // Create peer connection
+    const pc = new RTCPeerConnection();
+
+    // Set up remote audio
+    this.state.remoteAudio = document.createElement('audio');
+    this.state.remoteAudio.autoplay = true;
+    document.body.appendChild(this.state.remoteAudio);
+
+    pc.ontrack = (e) => {
+      this.state.remoteAudio.srcObject = e.streams[0];
+    };
+
+    // Get local mic
+    try {
+      this.state.localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    } catch (err) {
+      this.addChatMessage('system', 'Microphone access denied. Allow mic access and try again.');
+      this.updateCallStatus('Mic blocked');
       return;
     }
-    this.addChatMessage('user', text);
-    this.state.transcript.push({ role: 'user', content: text });
-    this.addChatMessage('ai', '...');
-    this.updateCallStatus('AI is thinking...');
-    try {
-      const response = await fetch('/api/roleplay', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          mode: this.state.callMode,
-          message: text,
-          transcript: this.state.transcript,
-          product: this.state.product,
-          script: this.state.script,
-          customer_type: this.state.product.customer_type,
-          sales_style: this.state.product.sales_style,
-          sales_channel: this.state.product.sales_channel
-        })
+
+    // Add local track
+    pc.addTrack(this.state.localStream.getTracks()[0]);
+
+    // Data channel for text events
+    this.state.dataChannel = pc.createDataChannel('oai-events');
+    this.state.peerConnection = pc;
+
+    this.state.dataChannel.addEventListener('message', (e) => {
+      const event = JSON.parse(e.data);
+      this.handleRealtimeEvent(event);
+    });
+
+    // Create offer
+    const offer = await pc.createOffer();
+    await pc.setLocalDescription(offer);
+
+    // Wait for ICE gathering
+    await this.waitForIceComplete(pc);
+
+    // Send offer to OpenAI Realtime API via SDP exchange
+    const sdpResponse = await fetch('https://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/sdp',
+        'Authorization': 'Bearer ' + clientSecret.value
+      },
+      body: pc.localDescription.sdp
+    });
+
+    if (!sdpResponse.ok) {
+      const errText = await sdpResponse.text();
+      throw new Error('Realtime SDP exchange failed: ' + errText);
+    }
+
+    const answerSdp = await sdpResponse.text();
+    await pc.setRemoteDescription({ type: 'answer', sdp: answerSdp });
+
+    this.state.callActive = true;
+    this.state.callStartTime = Date.now();
+    this.startCallTimer();
+    this.updateCallStatus(mode === 'reversal' ? 'AI is pitching to you...' : 'Live - just talk naturally');
+
+    if (mode === 'reversal') {
+      // Tell the AI to start pitching
+      this.sendDataChannelEvent({
+        type: 'response.create',
+        response: {
+          modalities: ['text', 'audio'],
+          instructions: 'Start the call now with your opening line.'
+        }
       });
-      if (!response.ok) { const err = await response.json().catch(() => ({})); throw new Error(err.error || 'Failed'); }
-      const result = await response.json();
-      this.removeLastPlaceholder();
-      this.addChatMessage('ai', result.message);
-      this.state.transcript.push({ role: 'assistant', content: result.message });
-      this.state.isProcessing = false;
-      this.speak(result.message);
-    } catch (err) {
-      console.error('Roleplay error:', err);
-      this.removeLastPlaceholder();
-      this.addChatMessage('system', 'Connection issue. Try speaking again.');
-      this.state.isProcessing = false;
-      this.state.canCapture = true;
-      this.startRecognition();
     }
   },
 
-  removeLastPlaceholder() {
-    const chat = document.getElementById('callChat');
-    const last = chat.lastElementChild;
-    if (last && last.textContent === '...') { last.remove(); }
+  waitForIceComplete(pc) {
+    return new Promise((resolve) => {
+      if (pc.iceGatheringState === 'complete') { resolve(); return; }
+      const checkState = () => {
+        if (pc.iceGatheringState === 'complete') {
+          pc.removeEventListener('icegatheringstatechange', checkState);
+          resolve();
+        }
+      };
+      pc.addEventListener('icegatheringstatechange', checkState);
+      // Timeout after 3 seconds
+      setTimeout(resolve, 3000);
+    });
+  },
+
+  sendDataChannelEvent(event) {
+    if (this.state.dataChannel && this.state.dataChannel.readyState === 'open') {
+      this.state.dataChannel.send(JSON.stringify(event));
+    }
+  },
+
+  handleRealtimeEvent(event) {
+    if (event.type === 'conversation.item.created') {
+      if (event.item && event.item.content) {
+        const textContent = event.item.content.find(c => c.type === 'text');
+        if (textContent && textContent.text) {
+          const role = event.item.role === 'assistant' ? 'ai' : 'user';
+          if (role === 'ai' || (role === 'user' && this.state.callActive)) {
+            this.addChatMessage(role, textContent.text);
+            this.state.transcript.push({ role: event.item.role, content: textContent.text });
+          }
+        }
+      }
+    }
+
+    if (event.type === 'response.audio_transcript.done') {
+      if (event.transcript) {
+        this.addChatMessage('ai', event.transcript);
+        this.state.transcript.push({ role: 'assistant', content: event.transcript });
+      }
+    }
+
+    if (event.type === 'conversation.item.input_audio_transcription.completed') {
+      if (event.transcript) {
+        this.addChatMessage('user', event.transcript);
+        this.state.transcript.push({ role: 'user', content: event.transcript });
+      }
+    }
+
+    if (event.type === 'input_audio_buffer.speech_started') {
+      this.updateCallStatus('You\'re speaking...');
+      // Interrupt the AI if it's talking
+      this.sendDataChannelEvent({ type: 'response.cancel' });
+    }
+
+    if (event.type === 'input_audio_buffer.speech_stopped') {
+      this.updateCallStatus('Listening...');
+    }
+
+    if (event.type === 'response.audio_started') {
+      this.updateCallStatus('AI speaking...');
+    }
+
+    if (event.type === 'response.audio_stopped') {
+      this.updateCallStatus('Your turn - just talk');
+    }
+  },
+
+  startCallTimer() {
+    this.state.callTimer = setInterval(() => {
+      const elapsed = Math.floor((Date.now() - this.state.callStartTime) / 1000);
+      const mins = Math.floor(elapsed / 60);
+      const secs = elapsed % 60;
+      this.updateCallStatus(`${mins}:${secs < 10 ? '0' : ''}${secs} - Live`);
+    }, 1000);
   },
 
   async endCall() {
-    this.stopListening();
-    clearTimeout(this.state.silenceTimer);
-    clearTimeout(this.state.restartTimer);
-    if (window.speechSynthesis) window.speechSynthesis.cancel();
+    this.state.callActive = false;
+
+    if (this.state.callTimer) {
+      clearInterval(this.state.callTimer);
+      this.state.callTimer = null;
+    }
+
+    // Close WebRTC connection
+    if (this.state.peerConnection) {
+      this.state.peerConnection.close();
+      this.state.peerConnection = null;
+    }
+    if (this.state.dataChannel) {
+      this.state.dataChannel.close();
+      this.state.dataChannel = null;
+    }
+    if (this.state.localStream) {
+      this.state.localStream.getTracks().forEach(t => t.stop());
+      this.state.localStream = null;
+    }
+    if (this.state.remoteAudio) {
+      this.state.remoteAudio.srcObject = null;
+      if (this.state.remoteAudio.parentNode) {
+        this.state.remoteAudio.parentNode.removeChild(this.state.remoteAudio);
+      }
+      this.state.remoteAudio = null;
+    }
+
+    this.updateCallStatus('Call ended');
 
     if (this.state.transcript.length < 2) {
       this.addChatMessage('system', 'Call ended. Not enough conversation for coaching.');
       setTimeout(() => this.goToStep(1), 1500);
       return;
     }
+
     this.updateCallStatus('Analyzing your call...');
+    await this.getCoaching();
+  },
+
+  async getCoaching() {
     try {
       const response = await fetch('/api/coach', {
         method: 'POST',
@@ -567,17 +388,18 @@ const App = {
         body: JSON.stringify({
           transcript: this.state.transcript,
           script: this.state.script,
-          sales_style: this.state.product.sales_style,
           product: this.state.product
         })
       });
       if (!response.ok) { const err = await response.json().catch(() => ({})); throw new Error(err.error || 'Failed'); }
       const result = await response.json();
+      this.state.coachingData = result;
       this.displayCoaching(result);
-      this.goToStep(4);
+      this.goToStep(3);
     } catch (err) {
       console.error('Coaching error:', err);
       this.addChatMessage('system', 'Could not generate feedback. Please try another call.');
+      setTimeout(() => this.goToStep(1), 1500);
     }
   },
 
@@ -592,19 +414,75 @@ const App = {
     const text = document.createElement('div');
     text.innerHTML = '<div style="color:#f1f5f9;font-weight:600;font-size:1rem;">Overall Score</div><div style="color:#94a3b8;font-size:0.85rem;">' + (coaching.summary || "Here's your breakdown:") + '</div>';
     scoreEl.appendChild(text);
+
     const listEl = document.getElementById('coachingList');
     listEl.innerHTML = '';
-    if (coaching.nailed && coaching.nailed.length) { coaching.nailed.forEach(item => listEl.appendChild(this.createCoachingItem('NAILED', item))); }
-    if (coaching.missed && coaching.missed.length) { coaching.missed.forEach(item => listEl.appendChild(this.createCoachingItem('MISS', item))); }
-    if (coaching.tips && coaching.tips.length) { coaching.tips.forEach(item => listEl.appendChild(this.createCoachingItem('TIP', item))); }
-    if (coaching.objection_handling) { listEl.appendChild(this.createCoachingItem('OBJ', 'Objection Handling: ' + coaching.objection_handling)); }
+    if (coaching.nailed && coaching.nailed.length) {
+      coaching.nailed.forEach((item, i) => listEl.appendChild(this.createCoachingItem('NAILED', item, 'nailed', i)));
+    }
+    if (coaching.missed && coaching.missed.length) {
+      coaching.missed.forEach((item, i) => listEl.appendChild(this.createCoachingItem('MISSED', item, 'missed', i)));
+    }
+    if (coaching.tips && coaching.tips.length) {
+      coaching.tips.forEach((item, i) => listEl.appendChild(this.createCoachingItem('TIP', item, 'tip', i)));
+    }
+    if (coaching.objection_handling) {
+      listEl.appendChild(this.createCoachingItem('OBJ', 'Objection Handling: ' + coaching.objection_handling, 'obj', 0));
+    }
   },
 
-  createCoachingItem(icon, text) {
+  createCoachingItem(icon, text, type, index) {
     const div = document.createElement('div');
     div.className = 'coaching-item';
     div.innerHTML = '<div class="icon">' + icon + '</div><div class="text">' + text + '</div>';
+    // Add retry button for missed items
+    if (type === 'missed' && this.state.transcript.length > 0) {
+      const retryBtn = document.createElement('button');
+      retryBtn.className = 'retry-btn';
+      retryBtn.textContent = 'Retry from here';
+      retryBtn.addEventListener('click', () => this.retryFromPoint(index));
+      div.appendChild(retryBtn);
+    }
     return div;
+  },
+
+  async retryFromPoint(missedIndex) {
+    // Find the point in the transcript where this failure happened
+    // Replay conversation up to that point, then let user try again
+    const allMissed = this.state.coachingData?.missed || [];
+    const failurePoint = allMissed[missedIndex];
+    if (!failurePoint) return;
+
+    // Start a new call with context about what to retry
+    this.state.transcript = [];
+    this.goToStep(2);
+    document.getElementById('callChat').innerHTML = '';
+    this.addChatMessage('system', 'Retrying from your failure point: ' + failurePoint);
+    this.updateCallStatus('Reconnecting for retry...');
+
+    try {
+      const sessionResponse = await fetch('/api/realtime-session', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          product: this.state.product,
+          script: this.state.script,
+          customer_type: this.state.product.customer_type,
+          sales_channel: this.state.product.sales_channel,
+          difficulty: this.state.product.difficulty,
+          mode: 'roleplay',
+          product_url_content: this.state.product.product_url_content,
+          retry_context: failurePoint
+        })
+      });
+
+      if (!sessionResponse.ok) throw new Error('Failed to create retry session');
+      const sessionData = await sessionResponse.json();
+      await this.connectRealtime(sessionData.client_secret, 'roleplay');
+      this.addChatMessage('system', 'The call is starting fresh. Try a different approach this time.');
+    } catch (err) {
+      this.addChatMessage('system', 'Could not start retry: ' + err.message);
+    }
   },
 
   addChatMessage(role, text) {
@@ -616,7 +494,10 @@ const App = {
     chat.scrollTop = chat.scrollHeight;
   },
 
-  updateCallStatus(text) { document.getElementById('callStatusLabel').textContent = text; },
+  updateCallStatus(text) {
+    const el = document.getElementById('callStatusLabel');
+    if (el) el.textContent = text;
+  },
 
   goToStep(step) {
     this.state.step = step;
@@ -625,8 +506,6 @@ const App = {
     document.getElementById('step2').classList.toggle('visible', step === 2);
     document.getElementById('step3').classList.toggle('hidden', step !== 3);
     document.getElementById('step3').classList.toggle('visible', step === 3);
-    document.getElementById('step4').classList.toggle('hidden', step !== 4);
-    document.getElementById('step4').classList.toggle('visible', step === 4);
     document.querySelectorAll('.step-dot').forEach((dot, i) => {
       dot.classList.remove('active', 'done');
       if (i + 1 < step) { dot.classList.add('done'); } else if (i + 1 === step) { dot.classList.add('active'); }
@@ -634,8 +513,8 @@ const App = {
     window.scrollTo(0, 0);
   },
 
-  showError(elementId, message) {
-    const el = document.getElementById(elementId);
+  showError(message) {
+    const el = document.getElementById('generateError');
     el.textContent = message;
     el.classList.remove('hidden');
     setTimeout(() => el.classList.add('hidden'), 5000);
@@ -658,7 +537,7 @@ const App = {
       console.error('Checkout error:', err);
       btn.disabled = false;
       btn.textContent = 'Start 7-Day Free Trial';
-      this.showError('generateError', 'Could not connect to checkout. Please try again.');
+      this.showError('Could not connect to checkout. Please try again.');
     }
   }
 };

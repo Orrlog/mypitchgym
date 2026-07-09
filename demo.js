@@ -1,21 +1,15 @@
-﻿// MyPitchGym - Landing Page Demo Call (2 minutes, no signup)
+﻿// MyPitchGym - Landing Page Demo Call (Realtime API)
 
 const Demo = {
   state: {
     callActive: false,
     transcript: [],
-    isListening: false,
-    isSpeaking: false,
-    isProcessing: false,
-    canCapture: false,
-    recognition: null,
-    voiceEnabled: true,
-    selectedVoice: null,
-    timerInterval: null,
     timeRemaining: 120,
-    finalText: '',
-    silenceTimer: null,
-    restartTimer: null
+    timerInterval: null,
+    peerConnection: null,
+    dataChannel: null,
+    remoteAudio: null,
+    localStream: null
   },
 
   demoProduct: {
@@ -23,37 +17,18 @@ const Demo = {
     price_range: '15k-25k',
     benefits: ['Cuts electric bill 60-80%', '25-year warranty', '0% financing', 'Increases home value'],
     objections: 'Too expensive, I need to think about it, not sure it works in my area',
-    sales_style: 'consultative',
     customer_type: 'skeptic',
     difficulty: 'beginner',
     sales_channel: 'phone'
   },
 
   init() {
-    if (window.speechSynthesis) {
-      const load = () => {
-        const v = window.speechSynthesis.getVoices();
-        this.state.selectedVoice = v.find(v => v.name.includes('Google US English')) || v.find(v => v.name.includes('Samantha')) || v.find(v => v.lang.startsWith('en')) || v[0] || null;
-      };
-      load();
-      window.speechSynthesis.onvoiceschanged = load;
-    }
-
     document.getElementById('demoBtn').addEventListener('click', () => this.openModal());
     document.getElementById('demoCloseBtn').addEventListener('click', () => this.closeModal());
     document.getElementById('demoStartBtn').addEventListener('click', () => this.toggleCall());
-
-    const sendBtn = document.getElementById('demoSendText');
-    const textInput = document.getElementById('demoTextInput');
-    if (sendBtn) sendBtn.addEventListener('click', () => this.sendText());
-    if (textInput) textInput.addEventListener('keypress', (e) => {
-      if (e.key === 'Enter') this.sendText();
-    });
-
     document.getElementById('demoModal').addEventListener('click', (e) => {
       if (e.target.id === 'demoModal') this.closeModal();
     });
-
     setTimeout(() => {
       const w = document.getElementById('demoWidget');
       if (w) w.classList.add('visible');
@@ -75,144 +50,14 @@ const Demo = {
     }
   },
 
-  sendText() {
-    const input = document.getElementById('demoTextInput');
-    if (!input) return;
-    const text = input.value.trim();
-    if (text && this.state.callActive && !this.state.isProcessing && !this.state.isSpeaking) {
-      input.value = '';
-      this.state.canCapture = false;
-      this.state.isProcessing = true;
-      this.pauseRecognition();
-      this.handleUserSpeech(text);
-    }
+  setStatus(msg) {
+    const el = document.getElementById('demoStatus');
+    if (el) { el.textContent = msg; el.style.display = msg ? 'block' : 'none'; }
   },
 
-  debug(msg) {
-    const el = document.getElementById('demoDebug');
-    if (el) {
-      el.textContent = msg;
-      el.classList.remove('hidden');
-    }
-  },
-
-  speak(text) {
-    if (!window.speechSynthesis) {
-      this.state.isSpeaking = false;
-      this.state.canCapture = true;
-      this.startRecognition();
-      return;
-    }
-    // Don't stop recognition - just set canCapture false so we ignore speech while AI talks
-    this.state.canCapture = false;
-    window.speechSynthesis.cancel();
-    const u = new SpeechSynthesisUtterance(text);
-    if (this.state.selectedVoice) u.voice = this.state.selectedVoice;
-    u.rate = 1.05;
-    u.pitch = 0.95;
-    u.onstart = () => { this.state.isSpeaking = true; };
-    u.onend = () => {
-      this.state.isSpeaking = false;
-      this.state.canCapture = true;
-      this.debug('Your turn - speak or type below');
-    };
-    u.onerror = () => {
-      this.state.isSpeaking = false;
-      this.state.canCapture = true;
-      this.startRecognition();
-    };
-    window.speechSynthesis.speak(u);
-  },
-
-  initSpeechRecognition() {
-    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!SR) {
-      this.debug('Voice not available - type below to talk');
-      return false;
-    }
-    this.state.recognition = new SR();
-    this.state.recognition.continuous = true;
-    this.state.recognition.interimResults = true;
-    this.state.recognition.lang = 'en-US';
-
-    this.state.recognition.onresult = (event) => {
-      if (this.state.isSpeaking || this.state.isProcessing || !this.state.canCapture) return;
-      let interim = '';
-      this.state.finalText = '';
-      for (let i = event.resultIndex; i < event.results.length; i++) {
-        const t = event.results[i][0].transcript;
-        if (event.results[i].isFinal) { this.state.finalText += t; } else { interim += t; }
-      }
-      if (interim) this.debug('Hearing: "' + interim.substring(0, 40) + '"');
-      if (this.state.finalText) {
-        clearTimeout(this.state.silenceTimer);
-        this.state.silenceTimer = setTimeout(() => {
-          if (this.state.finalText.trim() && this.state.canCapture && !this.state.isProcessing) {
-            this.state.canCapture = false;
-            this.state.isProcessing = true;
-            this.handleUserSpeech(this.state.finalText.trim());
-          }
-        }, 800);
-      }
-    };
-
-    this.state.recognition.onerror = (event) => {
-      if (event.error === 'no-speech') return;
-      if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
-        this.debug('Mic blocked - type below to talk');
-      } else {
-        this.debug('Mic error: ' + event.error + ' - type below');
-      }
-    };
-
-    this.state.recognition.onend = () => {
-      this.state.isListening = false;
-      // Auto-restart recognition if call is still active - keeps mic hot entire call
-      if (this.state.callActive && !this.state.isSpeaking && !this.state.isProcessing) {
-        clearTimeout(this.state.restartTimer);
-        this.state.restartTimer = setTimeout(() => {
-          if (this.state.callActive && !this.state.isSpeaking && !this.state.isProcessing) {
-            this.startRecognition();
-          }
-        }, 200);
-      }
-    };
-
-    return true;
-  },
-
-  startRecognition() {
-    if (!this.state.recognition || !this.state.callActive) return;
-    if (this.state.isListening) return;
-    try {
-      this.state.recognition.start();
-      this.state.isListening = true;
-    } catch(e) {
-      if (e.message && e.message.includes('already started')) {
-        this.state.isListening = true;
-      }
-    }
-  },
-
-  pauseRecognition() {
-    if (this.state.recognition && this.state.isListening) {
-      try { this.state.recognition.stop(); } catch(e) {}
-      this.state.isListening = false;
-    }
-  },
-
-  startCall() {
-    // Reset all state
+  async startCall() {
     this.state.transcript = [];
-    this.state.callActive = true;
-    this.state.canCapture = false;
-    this.state.isProcessing = false;
-    this.state.isSpeaking = false;
-    this.state.finalText = '';
-
-    // Show text input (always visible as fallback)
-    const textArea = document.getElementById('demoTextInputArea');
-    if (textArea) textArea.classList.remove('hidden');
+    this.state.callActive = false;
 
     // Reset UI
     document.getElementById('demoChat').innerHTML = '';
@@ -220,46 +65,157 @@ const Demo = {
     document.getElementById('demoStartBtn').textContent = 'End Call';
     document.getElementById('demoStartBtn').classList.add('listening');
     document.getElementById('demoStartBtn').style.display = '';
-
-    const timerBar = document.querySelector('.demo-timer-bar');
-    if (timerBar) timerBar.style.display = '';
-    const timerText = document.getElementById('demoTimerText');
-    if (timerText) timerText.style.display = '';
-    const header = document.querySelector('.demo-header');
-    if (header) header.style.display = '';
+    document.querySelector('.demo-timer-bar').style.display = '';
+    document.getElementById('demoTimerText').style.display = '';
+    document.querySelector('.demo-header').style.display = '';
     document.getElementById('demoUpsell').classList.add('hidden');
 
-    this.addChatMessage('system', 'Calling... connecting you now.');
+    this.addChatMessage('system', 'Connecting call...');
+    this.setStatus('Connecting...');
     this.startTimer();
 
-    // START MIC IMMEDIATELY - Chrome requires user gesture for mic permission
-    // canCapture is false so we won't process speech while the prospect greets
-    if (this.initSpeechRecognition()) {
-      this.startRecognition();
-      this.debug('Listening (prospect is answering...)');
-    } else {
-      this.debug('No voice - type below to talk');
-    }
+    try {
+      const sessionResponse = await fetch('/api/realtime-session', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          product: this.demoProduct,
+          script: null,
+          customer_type: 'skeptic',
+          sales_channel: 'phone',
+          difficulty: 'beginner',
+          mode: 'roleplay'
+        })
+      });
 
-    // Prospect answers after 1 second
-    setTimeout(() => {
-      if (!this.state.callActive) return;
-      this.prospectAnswers();
-    }, 1000);
+      if (!sessionResponse.ok) throw new Error('Failed to create session');
+      const sessionData = await sessionResponse.json();
+      await this.connectRealtime(sessionData.client_secret);
+
+    } catch (err) {
+      this.addChatMessage('system', 'Connection failed: ' + err.message);
+      this.setStatus('Failed');
+    }
   },
 
-  prospectAnswers() {
-    const greeting = "Hello?";
-    this.addChatMessage('ai', greeting);
-    this.state.transcript.push({ role: 'assistant', content: greeting });
-    this.speak(greeting);
+  async connectRealtime(clientSecret) {
+    const pc = new RTCPeerConnection();
 
-    // After greeting, enable user to talk (mic is already running)
-    setTimeout(() => {
-      if (!this.state.callActive) return;
-      this.state.canCapture = true;
-      this.debug('Your turn - speak or type below');
-    }, 1800);
+    this.state.remoteAudio = document.createElement('audio');
+    this.state.remoteAudio.autoplay = true;
+    document.body.appendChild(this.state.remoteAudio);
+
+    pc.ontrack = (e) => {
+      this.state.remoteAudio.srcObject = e.streams[0];
+    };
+
+    try {
+      this.state.localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    } catch (err) {
+      this.addChatMessage('system', 'Microphone access denied. Allow mic access in Chrome and try again.');
+      this.setStatus('Mic blocked');
+      return;
+    }
+
+    pc.addTrack(this.state.localStream.getTracks()[0]);
+
+    this.state.dataChannel = pc.createDataChannel('oai-events');
+    this.state.peerConnection = pc;
+
+    this.state.dataChannel.addEventListener('message', (e) => {
+      const event = JSON.parse(e.data);
+      this.handleRealtimeEvent(event);
+    });
+
+    const offer = await pc.createOffer();
+    await pc.setLocalDescription(offer);
+    await this.waitForIceComplete(pc);
+
+    const sdpResponse = await fetch('https://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/sdp',
+        'Authorization': 'Bearer ' + clientSecret.value
+      },
+      body: pc.localDescription.sdp
+    });
+
+    if (!sdpResponse.ok) {
+      const errText = await sdpResponse.text();
+      throw new Error('Realtime connection failed: ' + errText);
+    }
+
+    const answerSdp = await sdpResponse.text();
+    await pc.setRemoteDescription({ type: 'answer', sdp: answerSdp });
+
+    this.state.callActive = true;
+    this.setStatus('Live - just talk naturally');
+  },
+
+  waitForIceComplete(pc) {
+    return new Promise((resolve) => {
+      if (pc.iceGatheringState === 'complete') { resolve(); return; }
+      const checkState = () => {
+        if (pc.iceGatheringState === 'complete') {
+          pc.removeEventListener('icegatheringstatechange', checkState);
+          resolve();
+        }
+      };
+      pc.addEventListener('icegatheringstatechange', checkState);
+      setTimeout(resolve, 3000);
+    });
+  },
+
+  sendDataChannelEvent(event) {
+    if (this.state.dataChannel && this.state.dataChannel.readyState === 'open') {
+      this.state.dataChannel.send(JSON.stringify(event));
+    }
+  },
+
+  handleRealtimeEvent(event) {
+    if (event.type === 'conversation.item.created') {
+      if (event.item && event.item.content) {
+        const textContent = event.item.content.find(c => c.type === 'text');
+        if (textContent && textContent.text) {
+          const role = event.item.role === 'assistant' ? 'ai' : 'user';
+          if (role === 'ai' || (role === 'user' && this.state.callActive)) {
+            this.addChatMessage(role, textContent.text);
+            this.state.transcript.push({ role: event.item.role, content: textContent.text });
+          }
+        }
+      }
+    }
+
+    if (event.type === 'response.audio_transcript.done') {
+      if (event.transcript) {
+        this.addChatMessage('ai', event.transcript);
+        this.state.transcript.push({ role: 'assistant', content: event.transcript });
+      }
+    }
+
+    if (event.type === 'conversation.item.input_audio_transcription.completed') {
+      if (event.transcript) {
+        this.addChatMessage('user', event.transcript);
+        this.state.transcript.push({ role: 'user', content: event.transcript });
+      }
+    }
+
+    if (event.type === 'input_audio_buffer.speech_started') {
+      this.setStatus('You\'re speaking...');
+      this.sendDataChannelEvent({ type: 'response.cancel' });
+    }
+
+    if (event.type === 'input_audio_buffer.speech_stopped') {
+      this.setStatus('Listening...');
+    }
+
+    if (event.type === 'response.audio_started') {
+      this.setStatus('AI speaking...');
+    }
+
+    if (event.type === 'response.audio_stopped') {
+      this.setStatus('Your turn - just talk');
+    }
   },
 
   startTimer() {
@@ -268,17 +224,12 @@ const Demo = {
     this.state.timerInterval = setInterval(() => {
       this.state.timeRemaining--;
       this.updateTimerDisplay();
-      if (this.state.timeRemaining <= 0) {
-        this.endCall(true);
-      }
+      if (this.state.timeRemaining <= 0) this.endCall(true);
     }, 1000);
   },
 
   stopTimer() {
-    if (this.state.timerInterval) {
-      clearInterval(this.state.timerInterval);
-      this.state.timerInterval = null;
-    }
+    if (this.state.timerInterval) { clearInterval(this.state.timerInterval); this.state.timerInterval = null; }
   },
 
   updateTimerDisplay() {
@@ -290,88 +241,30 @@ const Demo = {
     if (fill) {
       const pct = (this.state.timeRemaining / 120) * 100;
       fill.style.width = pct + '%';
-      if (this.state.timeRemaining <= 30) {
-        el.style.color = '#ef4444';
-        fill.style.background = '#ef4444';
-      }
-    }
-  },
-
-  async handleUserSpeech(text) {
-    if (!text || !text.trim()) {
-      this.state.isProcessing = false;
-      this.state.canCapture = true;
-      this.startRecognition();
-      return;
-    }
-    this.addChatMessage('user', text);
-    this.state.transcript.push({ role: 'user', content: text });
-    this.addChatMessage('ai', '...');
-    this.debug('AI is thinking...');
-
-    try {
-      const response = await fetch('/api/roleplay', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          mode: 'roleplay',
-          message: text,
-          transcript: this.state.transcript,
-          product: this.demoProduct,
-          script: null,
-          customer_type: 'skeptic',
-          sales_style: 'consultative',
-          sales_channel: 'phone'
-        })
-      });
-      if (!response.ok) throw new Error('Failed');
-      const result = await response.json();
-
-      const chat = document.getElementById('demoChat');
-      const last = chat.lastElementChild;
-      if (last && last.textContent === '...') last.remove();
-
-      this.addChatMessage('ai', result.message);
-      this.state.transcript.push({ role: 'assistant', content: result.message });
-      this.state.isProcessing = false;
-      this.speak(result.message);
-    } catch (err) {
-      const chat = document.getElementById('demoChat');
-      const last = chat.lastElementChild;
-      if (last && last.textContent === '...') last.remove();
-      this.addChatMessage('system', 'Connection issue. Try again.');
-      this.state.isProcessing = false;
-      this.state.canCapture = true;
-      this.startRecognition();
+      if (this.state.timeRemaining <= 30) { el.style.color = '#ef4444'; fill.style.background = '#ef4444'; }
     }
   },
 
   endCall(timedOut) {
     this.state.callActive = false;
-    this.state.canCapture = false;
-    this.state.isProcessing = false;
-    this.state.isSpeaking = false;
 
-    if (this.state.recognition) {
-      try { this.state.recognition.stop(); } catch(e) {}
+    if (this.state.peerConnection) { this.state.peerConnection.close(); this.state.peerConnection = null; }
+    if (this.state.dataChannel) { this.state.dataChannel.close(); this.state.dataChannel = null; }
+    if (this.state.localStream) { this.state.localStream.getTracks().forEach(t => t.stop()); this.state.localStream = null; }
+    if (this.state.remoteAudio) {
+      this.state.remoteAudio.srcObject = null;
+      if (this.state.remoteAudio.parentNode) this.state.remoteAudio.parentNode.removeChild(this.state.remoteAudio);
+      this.state.remoteAudio = null;
     }
-    if (window.speechSynthesis) window.speechSynthesis.cancel();
-    clearTimeout(this.state.silenceTimer);
-    clearTimeout(this.state.restartTimer);
+
     this.stopTimer();
 
     document.getElementById('demoStartBtn').style.display = 'none';
     document.getElementById('demoChat').style.display = 'none';
-    const timerBar = document.querySelector('.demo-timer-bar');
-    if (timerBar) timerBar.style.display = 'none';
-    const timerText = document.getElementById('demoTimerText');
-    if (timerText) timerText.style.display = 'none';
-    const header = document.querySelector('.demo-header');
-    if (header) header.style.display = 'none';
-    const textArea = document.getElementById('demoTextInputArea');
-    if (textArea) textArea.classList.add('hidden');
-    const debug = document.getElementById('demoDebug');
-    if (debug) debug.classList.add('hidden');
+    document.querySelector('.demo-timer-bar').style.display = 'none';
+    document.getElementById('demoTimerText').style.display = 'none';
+    document.querySelector('.demo-header').style.display = 'none';
+    this.setStatus('');
 
     document.getElementById('demoUpsell').classList.remove('hidden');
   },

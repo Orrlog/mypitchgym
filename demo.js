@@ -201,7 +201,7 @@ const Demo = {
       if (this.state.mediaRecorder && this.state.mediaRecorder.state === "recording") {
         this.state.mediaRecorder.stop();
       }
-    }, 4000);
+    }, 6000);
   },
 
   async sendAudioToServer(base64Audio) {

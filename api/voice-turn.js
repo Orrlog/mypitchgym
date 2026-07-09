@@ -5,18 +5,18 @@ const openai = new OpenAI({
 });
 
 const customerPersonas = {
-  skeptic: "You are deeply skeptical. You question every claim. You say Prove it. You are NOT easily won over.",
-  price_shopper: "You care primarily about price. You mention competitors and lower prices.",
-  hostile: "You do not want to be on this call. You are annoyed. You give short cold answers.",
-  impatient: "You are busy and impatient. You want the bottom line in 30 seconds.",
-  noncommittal: "You agree with everything but will not commit. You say Let me think about it.",
-  detail: "You want to understand everything. You ask technical detailed questions."
+  skeptic: "You are deeply skeptical. You question every claim. You say things like \"That's what everyone says\" and \"Prove it.\" You are NOT easily won over. But you WILL listen if they make a good point.",
+  price_shopper: "You care primarily about price. You mention competitors and lower prices. You say \"Your competitor is 30% cheaper\" and \"What's the best you can do?\"",
+  hostile: "You don't want to be on this call. You're annoyed. You give short, cold answers. You try to end the conversation. You say \"I didn't ask for this call.\"",
+  impatient: "You're busy and impatient. You want the bottom line in 30 seconds. You say \"Just give me the price\" and \"I've got 5 minutes.\"",
+  noncommittal: "You agree with everything but won't commit. You say \"Sounds great\" but never say yes. You say \"Let me think about it.\"",
+  detail: "You want to understand everything. You ask technical, detailed questions. You say \"Walk me through exactly how this works.\""
 };
 
 const channels = {
   phone: "This is a phone call. The prospect answered their phone.",
-  in_person: "The salesperson walked into the prospect business unannounced.",
-  door: "The salesperson knocked on the prospect door at their home."
+  in_person: "The salesperson walked into the prospect's business unannounced.",
+  door: "The salesperson knocked on the prospect's door at their home."
 };
 
 module.exports = async (req, res) => {
@@ -27,30 +27,22 @@ module.exports = async (req, res) => {
   try {
     const { audio, transcript, product, script, customer_type, sales_channel, difficulty, mode, product_url_content, retry_context } = req.body;
 
-    // If audio is provided, transcribe it first
     let userMessage = req.body.text || "";
     
     if (audio && !userMessage) {
-      // audio is base64 encoded webm/ogg
       const audioBuffer = Buffer.from(audio, "base64");
-      
-      // Create a temporary file-like object for Whisper
       const audioFile = new File([audioBuffer], "audio.webm", { type: "audio/webm" });
-      
       const transcription = await openai.audio.transcriptions.create({
         file: audioFile,
         model: "whisper-1"
       });
-      
       userMessage = transcription.text;
-      console.log("Transcribed:", userMessage);
     }
 
     if (!userMessage || !userMessage.trim()) {
       return res.status(200).json({ error: "No speech detected", transcript_text: "" });
     }
 
-    // Build the conversation
     const persona = customerPersonas[customer_type] || customerPersonas.skeptic;
     const channel = channels[sales_channel] || channels.phone;
     const isPro = difficulty === "pro";
@@ -65,25 +57,47 @@ module.exports = async (req, res) => {
     let systemPrompt = "";
     
     if (mode === "reversal") {
-      systemPrompt = "You are an expert salesperson. The human plays the prospect.\n\nYou are selling: " + productInfo + urlContent + "\n" + channel + 
-        "\n\nScript:\n" + (script || "No script.") + 
-        "\n\nRULES:\n- You are the SALESPERSON.\n- Keep responses SHORT (2-4 sentences).\n- Handle objections using proven techniques.\n- Always move toward the close.";
+      systemPrompt = "You are an expert salesperson demonstrating a perfect pitch. The human plays the prospect.\n\n" +
+        "You are selling: " + productInfo + urlContent + "\n" + channel + 
+        "\n\nScript to follow:\n" + (script || "No script. Use proven sales techniques.") + 
+        "\n\nRULES:\n" +
+        "- You are the SALESPERSON. You are confident, not pushy.\n" +
+        "- Keep responses SHORT. 1-3 sentences maximum per turn. Do NOT monologue.\n" +
+        "- If the prospect says it's a bad time, do NOT just ask to call back later. That's what amateurs do. Acknowledge it briefly, then pivot: \"I totally get it. I'll be brief - the reason I called is [hook]. Is now a bad time or can I have 30 seconds?\" Show them you respect their time but also create curiosity.\n" +
+        "- Handle objections with confidence. Never apologize for calling. Never sound desperate.\n" +
+        "- Use proven sales methodology: pattern interrupt, then curiosity hook, then permission to continue, then value.\n" +
+        "- If they say they're not interested, don't give up immediately. Probe: \"Fair enough - out of curiosity, what made you go with your current provider?\"\n" +
+        "- Always be driving toward the close or next step.\n" +
+        "- Sound like a real person on a phone call, not a robot reading a script.";
     } else {
-      systemPrompt = "You are role-playing as a PROSPECT/BUYER on a sales call. The human is the salesperson.\n\nYOUR CHARACTER:\n" + persona + "\n\n" + channel + "\n\n";
+      systemPrompt = "You are role-playing as a PROSPECT/BUYER on a sales call. The human is the salesperson.\n\n" +
+        "YOUR CHARACTER:\n" + persona + "\n\n" + channel + "\n\n";
+      
       if (isPro) {
-        systemPrompt += "DIFFICULTY: PRO. Be extra challenging. Interrupt if they ramble.\n\n";
+        systemPrompt += "DIFFICULTY: PRO. You can interrupt if they ramble. Push harder on weak answers. If they fumble badly, say \"Look, I have to go\" and try to end the call. But still let them speak - don't talk over them constantly.\n\n";
       } else {
-        systemPrompt += "DIFFICULTY: BEGINNER. Be challenging but fair.\n\n";
+        systemPrompt += "DIFFICULTY: BEGINNER. Be challenging but FAIR. Let the salesperson finish their pitch. Don't interrupt them mid-sentence. Give them a real chance to handle your objections. If they give a decent answer, acknowledge it. Push back but don't bowl them over. You're testing them, not destroying them.\n\n";
       }
+      
       if (retry_context) {
-        systemPrompt += "RETRY CONTEXT: Previously struggled with: " + retry_context + "\n\n";
+        systemPrompt += "RETRY CONTEXT: The salesperson previously struggled with: " + retry_context + ". Give them a fair chance to do better.\n\n";
       }
+      
       systemPrompt += "PRODUCT BEING SOLD TO YOU:\n" + productInfo + urlContent + 
-        "\n\nScript:\n" + (script || "No script.") + 
-        "\n\nRULES:\n- Stay in character as the BUYER at ALL TIMES.\n- Keep responses SHORT (1-3 sentences).\n- Push back. Raise objections.\n- Do not be won over easily.\n- Sound like a real person on a phone call.\n- Let the salesperson speak first after you answer.\n- When the call starts, answer with Hello? or Yeah?";
+        "\n\nScript they should be following:\n" + (script || "No script provided.") + 
+        "\n\nRULES:\n" +
+        "- Stay in character as the BUYER at ALL TIMES. Never break character. Never give the salesperson advice.\n" +
+        "- When the call starts, answer the phone naturally: say \"Hello?\" or \"Yeah?\" or \"This is [name].\"\n" +
+        "- Keep YOUR responses SHORT. 1-2 sentences most of the time. 3 max. Real prospects don't give speeches.\n" +
+        "- Let the salesperson talk. Don't interrupt them every time. Only interrupt if they ramble for too long.\n" +
+        "- Raise ONE objection at a time. Wait for their response before raising another.\n" +
+        "- If they give a genuinely good answer, acknowledge it before raising the next concern.\n" +
+        "- Don't be a pushover but don't be impossible either. A great salesperson should be able to move you.\n" +
+        "- Sound like a real person on a phone call. Use filler words. Be natural.\n" +
+        "- If you're the skeptic, be skeptical but not hostile. There's a difference.\n" +
+        "- Let the salesperson speak first after you answer the phone.";
     }
 
-    // Build messages from transcript
     const messages = [{ role: "system", content: systemPrompt }];
     if (transcript && transcript.length > 0) {
       for (const t of transcript) {
@@ -92,17 +106,15 @@ module.exports = async (req, res) => {
     }
     messages.push({ role: "user", content: userMessage });
 
-    // Get AI response
     const chatResponse = await openai.chat.completions.create({
       model: "gpt-4o-mini",
       messages: messages,
-      temperature: 0.8,
-      max_tokens: 200
+      temperature: 0.7,
+      max_tokens: 150
     });
 
     const aiText = chatResponse.choices[0].message.content;
 
-    // Convert to speech using OpenAI TTS (natural voice)
     const ttsResponse = await openai.audio.speech.create({
       model: "tts-1",
       voice: "alloy",
@@ -110,7 +122,6 @@ module.exports = async (req, res) => {
       response_format: "mp3"
     });
 
-    // Get the audio as base64
     const audioArrayBuffer = await ttsResponse.arrayBuffer();
     const audioBase64 = Buffer.from(audioArrayBuffer).toString("base64");
 

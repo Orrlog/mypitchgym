@@ -155,8 +155,14 @@ body {
   box-shadow: 0 6px 32px rgba(99, 102, 241, 0.6);
 }
 @keyframes demo-pulse {
-  0%, 100% { box-shadow: 0 4px 24px rgba(99, 102, 241, 0.4); }
-  50% { box-shadow: 0 4px 24px rgba(99, 102, 241, 0.7), 0 0 0 8px rgba(99, 102, 241, 0.1); }
+  0%, 100% { 
+    box-shadow: 0 4px 24px rgba(99, 102, 241, 0.5), 0 0 0 0px rgba(99, 102, 241, 0.4);
+    transform: scale(1);
+  }
+  50% { 
+    box-shadow: 0 4px 32px rgba(99, 102, 241, 0.8), 0 0 0 12px rgba(99, 102, 241, 0.15);
+    transform: scale(1.03);
+  }
 }
 
 .demo-icon { font-size: 1.5rem; }

@@ -122,8 +122,12 @@ const Demo = {
     };
 
     this.state.recognition.onend = () => {
-      if (this.state.isListening) {
-        try { this.state.recognition.start(); } catch(e) {}
+      if (this.state.isListening && !this.state.isSpeaking && this.state.callStarted) {
+        setTimeout(() => {
+          if (this.state.isListening && !this.state.isSpeaking && this.state.callStarted) {
+            try { this.state.recognition.start(); } catch(e) {}
+          }
+        }, 100);
       }
     };
 
@@ -135,15 +139,24 @@ const Demo = {
       this.addChatMessage('system', 'Voice needs Chrome browser. This demo works best in Chrome.');
       return;
     }
-    try {
-      if (window.speechSynthesis) window.speechSynthesis.cancel();
-      this.state.recognition.start();
-      this.state.isListening = true;
-      document.getElementById('demoStartBtn').textContent = '🔴 Listening... (tap to stop)';
-      document.getElementById('demoStartBtn').classList.add('listening');
-    } catch(e) {
-      console.error('Demo recognition start error:', e);
-    }
+    setTimeout(() => {
+      try {
+        if (window.speechSynthesis) window.speechSynthesis.cancel();
+        this.state.recognition.start();
+        this.state.isListening = true;
+        document.getElementById('demoStartBtn').textContent = '🔴 Listening... (tap to end)';
+        document.getElementById('demoStartBtn').classList.add('listening');
+      } catch(e) {
+        if (e.message && e.message.includes('already started')) {
+          this.state.isListening = true;
+        } else {
+          console.error('Demo recognition start error:', e);
+          setTimeout(() => {
+            try { this.state.recognition.start(); this.state.isListening = true; } catch(e2) {}
+          }, 500);
+        }
+      }
+    }, 300);
   },
 
   stopListening() {

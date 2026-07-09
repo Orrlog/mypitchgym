@@ -148,8 +148,13 @@ const App = {
     };
 
     this.state.recognition.onend = () => {
-      if (this.state.isListening) {
-        try { this.state.recognition.start(); } catch(e) {}
+      // Only auto-restart if we're supposed to be listening AND the AI isn't speaking
+      if (this.state.isListening && !this.state.isSpeaking) {
+        setTimeout(() => {
+          if (this.state.isListening && !this.state.isSpeaking && this.state.step === 3) {
+            try { this.state.recognition.start(); } catch(e) {}
+          }
+        }, 100);
       }
     };
 

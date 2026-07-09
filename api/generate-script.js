@@ -55,7 +55,8 @@ module.exports = async (req, res) => {
       extra_context,
       sales_style,
       customer_type,
-      user_script
+      user_script,
+      sales_channel
     } = req.body;
 
     // If user uploaded a script, parse it into the 5-section structure
@@ -140,6 +141,6 @@ Respond as valid JSON only:
     return res.status(200).json({ script });
   } catch (error) {
     console.error('Generate script error:', error);
-    return res.status(500).json({ error: 'Failed to generate script.', detail: error.message, type: error.type || 'unknown', status: error.status || 'unknown', code: error.code || 'unknown' });
+    return res.status(500).json({ error: 'Failed to generate script. Please try again.' });
   }
 };

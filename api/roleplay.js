@@ -54,7 +54,8 @@ module.exports = async (req, res) => {
       product,
       script,
       customer_type,
-      sales_style
+      sales_style,
+      sales_channel
     } = req.body;
 
     const difficulty = product?.difficulty || 'beginner';

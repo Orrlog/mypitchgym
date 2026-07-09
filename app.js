@@ -1,4 +1,4 @@
-// MyPitchGym - Frontend Application Logic (Realtime API voice)
+// MyPitchGym - App Logic (Whisper + GPT + OpenAI TTS)
 
 const App = {
   state: {
@@ -7,16 +7,14 @@ const App = {
     script: null,
     transcript: [],
     isSubscribed: false,
-    callMode: 'roleplay',
+    callMode: "roleplay",
     callActive: false,
-    callTimer: null,
-    callStartTime: 0,
-    peerConnection: null,
-    dataChannel: null,
-    audioContext: null,
-    remoteAudio: null,
+    isProcessing: false,
     localStream: null,
-    realtimeSession: null,
+    mediaRecorder: null,
+    audioChunks: [],
+    aiAudio: null,
+    recordTimeout: null,
     coachingData: null
   },
 
@@ -29,110 +27,106 @@ const App = {
 
   loadSubscriptionStatus() {
     const urlParams = new URLSearchParams(window.location.search);
-    if (urlParams.get('session_id')) {
+    if (urlParams.get("session_id")) {
       this.state.isSubscribed = true;
-      localStorage.setItem('mpg_subscribed', 'true');
-      window.history.replaceState({}, '', '/app');
+      localStorage.setItem("mpg_subscribed", "true");
+      window.history.replaceState({}, "", "/app");
     }
-    if (urlParams.get('canceled') === 'true') {
-      window.history.replaceState({}, '', '/app');
+    if (urlParams.get("canceled") === "true") {
+      window.history.replaceState({}, "", "/app");
     }
-    if (localStorage.getItem('mpg_subscribed') === 'true') {
+    if (localStorage.getItem("mpg_subscribed") === "true") {
       this.state.isSubscribed = true;
     }
-    if (!this.state.isSubscribed) {
-      this.showPaywall();
-    }
+    if (!this.state.isSubscribed) this.showPaywall();
   },
 
-  showPaywall() { document.getElementById('paywall').classList.add('visible'); },
-  hidePaywall() { document.getElementById('paywall').classList.remove('visible'); },
+  showPaywall() { document.getElementById("paywall").classList.add("visible"); },
+  hidePaywall() { document.getElementById("paywall").classList.remove("visible"); },
 
   setupFormHandlers() {
-    document.getElementById('addBenefitBtn').addEventListener('click', () => {
-      const c = document.getElementById('benefitsContainer');
-      const r = document.createElement('div');
-      r.className = 'benefit-row';
+    document.getElementById("addBenefitBtn").addEventListener("click", () => {
+      const c = document.getElementById("benefitsContainer");
+      const r = document.createElement("div");
+      r.className = "benefit-row";
       r.innerHTML = '<input type="text" class="benefit-input" placeholder="e.g. 25-year warranty"> <button class="btn-remove">x</button>';
       c.appendChild(r);
       this.updateRemoveButtons();
     });
-    document.getElementById('benefitsContainer').addEventListener('click', (e) => {
-      if (e.target.classList.contains('btn-remove')) { e.target.parentElement.remove(); this.updateRemoveButtons(); }
+    document.getElementById("benefitsContainer").addEventListener("click", (e) => {
+      if (e.target.classList.contains("btn-remove")) { e.target.parentElement.remove(); this.updateRemoveButtons(); }
     });
-    const cp = document.getElementById('btnClosePaywall');
-    if (cp) { cp.addEventListener('click', () => this.hidePaywall()); }
+    const cp = document.getElementById("btnClosePaywall");
+    if (cp) cp.addEventListener("click", () => this.hidePaywall());
   },
 
   updateRemoveButtons() {
-    const rows = document.querySelectorAll('#benefitsContainer .benefit-row');
+    const rows = document.querySelectorAll("#benefitsContainer .benefit-row");
     rows.forEach((row) => {
-      const btn = row.querySelector('.btn-remove');
-      if (rows.length > 1) { btn.classList.remove('hidden'); } else { btn.classList.add('hidden'); }
+      const btn = row.querySelector(".btn-remove");
+      if (rows.length > 1) btn.classList.remove("hidden"); else btn.classList.add("hidden");
     });
   },
 
   setupScriptHandlers() {
-    document.getElementById('btnPracticeAgain').addEventListener('click', () => this.startCall('roleplay'));
-    document.getElementById('btnNewSetup').addEventListener('click', () => {
+    document.getElementById("btnPracticeAgain").addEventListener("click", () => this.startCall("roleplay"));
+    document.getElementById("btnNewSetup").addEventListener("click", () => {
       this.goToStep(1);
       this.state.script = null;
       this.state.transcript = [];
     });
-    document.getElementById('btnRoleReverseAfter').addEventListener('click', () => this.startCall('reversal'));
-    document.getElementById('btnSubscribe').addEventListener('click', () => this.handleSubscription());
+    document.getElementById("btnRoleReverseAfter").addEventListener("click", () => this.startCall("reversal"));
+    document.getElementById("btnSubscribe").addEventListener("click", () => this.handleSubscription());
   },
 
   setupCallHandlers() {
-    document.getElementById('btnStartCall').addEventListener('click', () => this.startCall('roleplay'));
-    document.getElementById('btnEndCall').addEventListener('click', () => this.endCall());
+    document.getElementById("btnStartCall").addEventListener("click", () => this.startCall("roleplay"));
+    document.getElementById("btnEndCall").addEventListener("click", () => this.endCall());
   },
 
   async collectFormData() {
-    const productName = document.getElementById('productName').value.trim();
-    if (!productName) { this.showError('Please tell us what you sell.'); return null; }
-    const benefits = Array.from(document.querySelectorAll('.benefit-input')).map(i => i.value.trim()).filter(Boolean);
-    const product = {
+    const productName = document.getElementById("productName").value.trim();
+    if (!productName) { this.showError("Please tell us what you sell."); return null; }
+    const benefits = Array.from(document.querySelectorAll(".benefit-input")).map(i => i.value.trim()).filter(Boolean);
+    this.state.product = {
       product_name: productName,
-      price_range: document.getElementById('priceRange').value.trim(),
+      price_range: document.getElementById("priceRange").value.trim(),
       benefits: benefits,
-      objections: document.getElementById('objections').value.trim(),
-      extra_context: document.getElementById('extraContext').value.trim(),
-      customer_type: document.getElementById('customerType').value,
-      difficulty: document.getElementById('difficulty').value,
-      sales_channel: document.getElementById('salesChannel').value
+      objections: document.getElementById("objections").value.trim(),
+      extra_context: document.getElementById("extraContext").value.trim(),
+      customer_type: document.getElementById("customerType").value,
+      difficulty: document.getElementById("difficulty").value,
+      sales_channel: document.getElementById("salesChannel").value
     };
-    this.state.product = product;
-    this.state.script = document.getElementById('userScript').value.trim() || null;
-    return product;
+    this.state.script = document.getElementById("userScript").value.trim() || null;
+    return this.state.product;
   },
 
   async fetchUrlContent(url) {
     if (!url) return null;
     try {
-      this.updateCallStatus('Reading your product page...');
-      const response = await fetch('/api/fetch-url', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+      this.updateCallStatus("Reading your product page...");
+      const response = await fetch("/api/fetch-url", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ url: url })
       });
       if (!response.ok) return null;
       const result = await response.json();
       return result.content || null;
-    } catch (err) {
-      return null;
-    }
+    } catch (err) { return null; }
   },
 
   async startCall(mode) {
     this.state.callMode = mode;
     this.state.transcript = [];
     this.state.callActive = false;
+    this.state.isProcessing = false;
 
-    if (mode === 'roleplay' && this.state.step === 1) {
+    if (mode === "roleplay" && this.state.step === 1) {
       const product = await this.collectFormData();
       if (!product) return;
-      const url = document.getElementById('productUrl').value.trim();
+      const url = document.getElementById("productUrl").value.trim();
       if (url) {
         product.product_url = url;
         const content = await this.fetchUrlContent(url);
@@ -140,406 +134,334 @@ const App = {
       }
     }
 
-    const banner = document.getElementById('roleReverseBanner');
-    if (mode === 'reversal') {
-      banner.classList.remove('hidden');
-    } else {
-      banner.classList.add('hidden');
-    }
+    const banner = document.getElementById("roleReverseBanner");
+    if (mode === "reversal") banner.classList.remove("hidden");
+    else banner.classList.add("hidden");
 
     this.goToStep(2);
-    document.getElementById('callChat').innerHTML = '';
-    this.addChatMessage('system', mode === 'reversal' ? 'AI is preparing to pitch to you...' : 'Connecting your call...');
-    this.updateCallStatus('Connecting...');
+    document.getElementById("callChat").innerHTML = "";
+    this.addChatMessage("system", mode === "reversal" ? "AI is preparing to pitch to you..." : "Connecting your call...");
+    this.updateCallStatus("Requesting microphone...");
 
     try {
-      // Get ephemeral session token from server
-      const sessionResponse = await fetch('/api/realtime-session', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+      this.state.localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    } catch (err) {
+      this.addChatMessage("system", "Microphone access denied. Allow mic access and try again.");
+      this.updateCallStatus("Mic blocked");
+      return;
+    }
+
+    this.state.callActive = true;
+    this.updateCallStatus("Calling...");
+
+    if (mode === "reversal") {
+      await this.startRoleReversal();
+    } else {
+      setTimeout(() => { if (this.state.callActive) this.prospectGreets(); }, 800);
+    }
+  },
+
+  async prospectGreets() {
+    this.state.isProcessing = true;
+    this.updateCallStatus("Ringing...");
+    this.addChatMessage("ai", "...");
+
+    try {
+      const response = await fetch("/api/voice-turn", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          text: "Hello, is this the homeowner?",
+          transcript: [],
           product: this.state.product,
           script: this.state.script,
           customer_type: this.state.product.customer_type,
           sales_channel: this.state.product.sales_channel,
           difficulty: this.state.product.difficulty,
-          mode: mode,
-          product_url_content: this.state.product.product_url_content
+          mode: "roleplay"
         })
       });
-
-      if (!sessionResponse.ok) {
-        const err = await sessionResponse.json().catch(() => ({}));
-        throw new Error(err.error || 'Failed to create session');
-      }
-
-      const sessionData = await sessionResponse.json();
-      this.state.realtimeSession = sessionData;
-
-      // Connect via WebRTC
-      await this.connectRealtime(sessionData.client_secret, mode);
-
+      if (!response.ok) throw new Error("Failed");
+      const result = await response.json();
+      this.removeLastPlaceholder();
+      this.addChatMessage("ai", result.ai_text);
+      this.state.transcript.push({ role: "user", content: "Hello, is this the homeowner?" });
+      this.state.transcript.push({ role: "assistant", content: result.ai_text });
+      this.playAudio(result.ai_audio);
+      this.state.isProcessing = false;
     } catch (err) {
-      console.error('Call start error:', err);
-      this.addChatMessage('system', 'Failed to connect: ' + err.message);
-      this.updateCallStatus('Connection failed');
+      this.removeLastPlaceholder();
+      this.addChatMessage("system", "Connection failed: " + err.message);
+      this.state.isProcessing = false;
     }
   },
 
-  async connectRealtime(clientSecret, mode) {
-    // Create peer connection
-    const pc = new RTCPeerConnection();
+  async startRoleReversal() {
+    this.state.isProcessing = true;
+    this.addChatMessage("ai", "...");
 
-    // Set up remote audio
-    this.state.remoteAudio = document.createElement('audio');
-    this.state.remoteAudio.autoplay = true;
-    document.body.appendChild(this.state.remoteAudio);
-
-    pc.ontrack = (e) => {
-      this.state.remoteAudio.srcObject = e.streams[0];
-    };
-
-    // Get local mic
     try {
-      this.state.localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    } catch (err) {
-      this.addChatMessage('system', 'Microphone access denied. Allow mic access and try again.');
-      this.updateCallStatus('Mic blocked');
-      return;
-    }
-
-    // Add local track
-    pc.addTrack(this.state.localStream.getTracks()[0]);
-
-    // Data channel for text events
-    this.state.dataChannel = pc.createDataChannel('oai-events');
-    this.state.peerConnection = pc;
-
-    this.state.dataChannel.addEventListener('message', (e) => {
-      const event = JSON.parse(e.data);
-      this.handleRealtimeEvent(event);
-    });
-
-    // Create offer
-    const offer = await pc.createOffer();
-    await pc.setLocalDescription(offer);
-
-    // Wait for ICE gathering
-    await this.waitForIceComplete(pc);
-
-    // Send offer to OpenAI Realtime API via SDP exchange
-    const sdpResponse = await fetch('https://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/sdp',
-        'Authorization': 'Bearer ' + clientSecret.value
-      },
-      body: pc.localDescription.sdp
-    });
-
-    if (!sdpResponse.ok) {
-      const errText = await sdpResponse.text();
-      throw new Error('Realtime SDP exchange failed: ' + errText);
-    }
-
-    const answerSdp = await sdpResponse.text();
-    await pc.setRemoteDescription({ type: 'answer', sdp: answerSdp });
-
-    this.state.callActive = true;
-    this.state.callStartTime = Date.now();
-    this.startCallTimer();
-    this.updateCallStatus(mode === 'reversal' ? 'AI is pitching to you...' : 'Live - just talk naturally');
-
-    if (mode === 'reversal') {
-      // Tell the AI to start pitching
-      this.sendDataChannelEvent({
-        type: 'response.create',
-        response: {
-          modalities: ['text', 'audio'],
-          instructions: 'Start the call now with your opening line.'
-        }
+      const response = await fetch("/api/voice-turn", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          text: "Start the call. You are the salesperson.",
+          transcript: [],
+          product: this.state.product,
+          script: this.state.script,
+          customer_type: this.state.product.customer_type,
+          sales_channel: this.state.product.sales_channel,
+          difficulty: this.state.product.difficulty,
+          mode: "reversal"
+        })
       });
+      if (!response.ok) throw new Error("Failed");
+      const result = await response.json();
+      document.getElementById("callChat").innerHTML = "";
+      this.addChatMessage("system", "The AI is now the salesperson. Respond as the prospect.");
+      this.addChatMessage("ai", result.ai_text);
+      this.state.transcript.push({ role: "user", content: "Start the call." });
+      this.state.transcript.push({ role: "assistant", content: result.ai_text });
+      this.playAudio(result.ai_audio);
+      this.state.isProcessing = false;
+    } catch (err) {
+      document.getElementById("callChat").innerHTML = "";
+      this.addChatMessage("system", "Could not start. Try again.");
+      this.state.isProcessing = false;
     }
   },
 
-  waitForIceComplete(pc) {
-    return new Promise((resolve) => {
-      if (pc.iceGatheringState === 'complete') { resolve(); return; }
-      const checkState = () => {
-        if (pc.iceGatheringState === 'complete') {
-          pc.removeEventListener('icegatheringstatechange', checkState);
-          resolve();
-        }
-      };
-      pc.addEventListener('icegatheringstatechange', checkState);
-      // Timeout after 3 seconds
-      setTimeout(resolve, 3000);
-    });
+  playAudio(base64Audio) {
+    if (!base64Audio) { this.startRecording(); return; }
+    this.updateCallStatus("AI speaking...");
+    if (this.state.aiAudio) { this.state.aiAudio.pause(); this.state.aiAudio = null; }
+    const audio = new Audio("data:audio/mp3;base64," + base64Audio);
+    this.state.aiAudio = audio;
+    audio.onended = () => { this.state.aiAudio = null; this.updateCallStatus("Your turn - just talk"); this.startRecording(); };
+    audio.onerror = () => { this.state.aiAudio = null; this.updateCallStatus("Your turn - just talk"); this.startRecording(); };
+    audio.play();
   },
 
-  sendDataChannelEvent(event) {
-    if (this.state.dataChannel && this.state.dataChannel.readyState === 'open') {
-      this.state.dataChannel.send(JSON.stringify(event));
-    }
-  },
-
-  handleRealtimeEvent(event) {
-    if (event.type === 'conversation.item.created') {
-      if (event.item && event.item.content) {
-        const textContent = event.item.content.find(c => c.type === 'text');
-        if (textContent && textContent.text) {
-          const role = event.item.role === 'assistant' ? 'ai' : 'user';
-          if (role === 'ai' || (role === 'user' && this.state.callActive)) {
-            this.addChatMessage(role, textContent.text);
-            this.state.transcript.push({ role: event.item.role, content: textContent.text });
-          }
-        }
+  startRecording() {
+    if (!this.state.callActive || this.state.isProcessing) return;
+    if (!this.state.localStream) return;
+    this.state.audioChunks = [];
+    const mediaRecorder = new MediaRecorder(this.state.localStream);
+    this.state.mediaRecorder = mediaRecorder;
+    mediaRecorder.ondataavailable = (e) => { if (e.data.size > 0) this.state.audioChunks.push(e.data); };
+    mediaRecorder.onstop = () => {
+      if (!this.state.callActive) return;
+      if (this.state.audioChunks.length === 0) return;
+      const blob = new Blob(this.state.audioChunks, { type: "audio/webm" });
+      const reader = new FileReader();
+      reader.onloadend = () => { const base64 = reader.result.split(",")[1]; this.sendAudioToServer(base64); };
+      reader.readAsDataURL(blob);
+    };
+    mediaRecorder.start();
+    this.updateCallStatus("Listening...");
+    this.state.recordTimeout = setTimeout(() => {
+      if (this.state.mediaRecorder && this.state.mediaRecorder.state === "recording") {
+        this.state.mediaRecorder.stop();
       }
-    }
+    }, 4000);
+  },
 
-    if (event.type === 'response.audio_transcript.done') {
-      if (event.transcript) {
-        this.addChatMessage('ai', event.transcript);
-        this.state.transcript.push({ role: 'assistant', content: event.transcript });
+  async sendAudioToServer(base64Audio) {
+    if (!this.state.callActive) return;
+    this.state.isProcessing = true;
+    this.updateCallStatus("Processing...");
+    try {
+      const response = await fetch("/api/voice-turn", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          audio: base64Audio,
+          transcript: this.state.transcript,
+          product: this.state.product,
+          script: this.state.script,
+          customer_type: this.state.product.customer_type,
+          sales_channel: this.state.product.sales_channel,
+          difficulty: this.state.product.difficulty,
+          mode: this.state.callMode
+        })
+      });
+      if (!response.ok) throw new Error("Server error");
+      const result = await response.json();
+      if (result.user_text && result.user_text.trim()) {
+        this.addChatMessage("user", result.user_text);
+        this.state.transcript.push({ role: "user", content: result.user_text });
       }
-    }
-
-    if (event.type === 'conversation.item.input_audio_transcription.completed') {
-      if (event.transcript) {
-        this.addChatMessage('user', event.transcript);
-        this.state.transcript.push({ role: 'user', content: event.transcript });
+      if (result.ai_text) {
+        this.addChatMessage("ai", result.ai_text);
+        this.state.transcript.push({ role: "assistant", content: result.ai_text });
+        this.playAudio(result.ai_audio);
       }
-    }
-
-    if (event.type === 'input_audio_buffer.speech_started') {
-      this.updateCallStatus('You\'re speaking...');
-      // Interrupt the AI if it's talking
-      this.sendDataChannelEvent({ type: 'response.cancel' });
-    }
-
-    if (event.type === 'input_audio_buffer.speech_stopped') {
-      this.updateCallStatus('Listening...');
-    }
-
-    if (event.type === 'response.audio_started') {
-      this.updateCallStatus('AI speaking...');
-    }
-
-    if (event.type === 'response.audio_stopped') {
-      this.updateCallStatus('Your turn - just talk');
+      this.state.isProcessing = false;
+    } catch (err) {
+      this.addChatMessage("system", "Connection issue. Retrying...");
+      this.state.isProcessing = false;
+      setTimeout(() => { if (this.state.callActive) this.startRecording(); }, 1000);
     }
   },
 
-  startCallTimer() {
-    this.state.callTimer = setInterval(() => {
-      const elapsed = Math.floor((Date.now() - this.state.callStartTime) / 1000);
-      const mins = Math.floor(elapsed / 60);
-      const secs = elapsed % 60;
-      this.updateCallStatus(`${mins}:${secs < 10 ? '0' : ''}${secs} - Live`);
-    }, 1000);
-  },
-
-  async endCall() {
+  endCall() {
     this.state.callActive = false;
-
-    if (this.state.callTimer) {
-      clearInterval(this.state.callTimer);
-      this.state.callTimer = null;
-    }
-
-    // Close WebRTC connection
-    if (this.state.peerConnection) {
-      this.state.peerConnection.close();
-      this.state.peerConnection = null;
-    }
-    if (this.state.dataChannel) {
-      this.state.dataChannel.close();
-      this.state.dataChannel = null;
+    this.state.isProcessing = false;
+    if (this.state.recordTimeout) { clearTimeout(this.state.recordTimeout); this.state.recordTimeout = null; }
+    if (this.state.mediaRecorder && this.state.mediaRecorder.state === "recording") {
+      try { this.state.mediaRecorder.stop(); } catch(e) {}
     }
     if (this.state.localStream) {
       this.state.localStream.getTracks().forEach(t => t.stop());
       this.state.localStream = null;
     }
-    if (this.state.remoteAudio) {
-      this.state.remoteAudio.srcObject = null;
-      if (this.state.remoteAudio.parentNode) {
-        this.state.remoteAudio.parentNode.removeChild(this.state.remoteAudio);
-      }
-      this.state.remoteAudio = null;
-    }
-
-    this.updateCallStatus('Call ended');
-
+    if (this.state.aiAudio) { this.state.aiAudio.pause(); this.state.aiAudio = null; }
+    this.updateCallStatus("Call ended");
     if (this.state.transcript.length < 2) {
-      this.addChatMessage('system', 'Call ended. Not enough conversation for coaching.');
+      this.addChatMessage("system", "Call ended. Not enough conversation for coaching.");
       setTimeout(() => this.goToStep(1), 1500);
       return;
     }
-
-    this.updateCallStatus('Analyzing your call...');
-    await this.getCoaching();
+    this.updateCallStatus("Analyzing your call...");
+    this.getCoaching();
   },
 
   async getCoaching() {
     try {
-      const response = await fetch('/api/coach', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+      const response = await fetch("/api/coach", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           transcript: this.state.transcript,
           script: this.state.script,
           product: this.state.product
         })
       });
-      if (!response.ok) { const err = await response.json().catch(() => ({})); throw new Error(err.error || 'Failed'); }
+      if (!response.ok) throw new Error("Failed");
       const result = await response.json();
       this.state.coachingData = result;
       this.displayCoaching(result);
       this.goToStep(3);
     } catch (err) {
-      console.error('Coaching error:', err);
-      this.addChatMessage('system', 'Could not generate feedback. Please try another call.');
+      this.addChatMessage("system", "Could not generate feedback.");
       setTimeout(() => this.goToStep(1), 1500);
     }
   },
 
   displayCoaching(coaching) {
     const score = coaching.score || 0;
-    const scoreEl = document.getElementById('coachingScore');
-    scoreEl.innerHTML = '';
-    const circle = document.createElement('div');
-    circle.className = 'score-circle ' + (score >= 7 ? 'strong' : score >= 4 ? 'mid' : 'weak');
-    circle.textContent = score + '/10';
+    const scoreEl = document.getElementById("coachingScore");
+    scoreEl.innerHTML = "";
+    const circle = document.createElement("div");
+    circle.className = "score-circle " + (score >= 7 ? "strong" : score >= 4 ? "mid" : "weak");
+    circle.textContent = score + "/10";
     scoreEl.appendChild(circle);
-    const text = document.createElement('div');
-    text.innerHTML = '<div style="color:#f1f5f9;font-weight:600;font-size:1rem;">Overall Score</div><div style="color:#94a3b8;font-size:0.85rem;">' + (coaching.summary || "Here's your breakdown:") + '</div>';
+    const text = document.createElement("div");
+    text.innerHTML = '<div style="color:#f1f5f9;font-weight:600;font-size:1rem;">Overall Score</div><div style="color:#94a3b8;font-size:0.85rem;">' + (coaching.summary || "Breakdown:") + "</div>";
     scoreEl.appendChild(text);
-
-    const listEl = document.getElementById('coachingList');
-    listEl.innerHTML = '';
-    if (coaching.nailed && coaching.nailed.length) {
-      coaching.nailed.forEach((item, i) => listEl.appendChild(this.createCoachingItem('NAILED', item, 'nailed', i)));
-    }
-    if (coaching.missed && coaching.missed.length) {
-      coaching.missed.forEach((item, i) => listEl.appendChild(this.createCoachingItem('MISSED', item, 'missed', i)));
-    }
-    if (coaching.tips && coaching.tips.length) {
-      coaching.tips.forEach((item, i) => listEl.appendChild(this.createCoachingItem('TIP', item, 'tip', i)));
-    }
-    if (coaching.objection_handling) {
-      listEl.appendChild(this.createCoachingItem('OBJ', 'Objection Handling: ' + coaching.objection_handling, 'obj', 0));
-    }
+    const listEl = document.getElementById("coachingList");
+    listEl.innerHTML = "";
+    if (coaching.nailed) coaching.nailed.forEach((item, i) => listEl.appendChild(this.createCoachingItem("NAILED", item, "nailed", i)));
+    if (coaching.missed) coaching.missed.forEach((item, i) => listEl.appendChild(this.createCoachingItem("MISSED", item, "missed", i)));
+    if (coaching.tips) coaching.tips.forEach((item, i) => listEl.appendChild(this.createCoachingItem("TIP", item, "tip", i)));
+    if (coaching.objection_handling) listEl.appendChild(this.createCoachingItem("OBJ", "Objection Handling: " + coaching.objection_handling, "obj", 0));
   },
 
   createCoachingItem(icon, text, type, index) {
-    const div = document.createElement('div');
-    div.className = 'coaching-item';
-    div.innerHTML = '<div class="icon">' + icon + '</div><div class="text">' + text + '</div>';
-    // Add retry button for missed items
-    if (type === 'missed' && this.state.transcript.length > 0) {
-      const retryBtn = document.createElement('button');
-      retryBtn.className = 'retry-btn';
-      retryBtn.textContent = 'Retry from here';
-      retryBtn.addEventListener('click', () => this.retryFromPoint(index));
+    const div = document.createElement("div");
+    div.className = "coaching-item";
+    div.innerHTML = '<div class="icon">' + icon + '</div><div class="text">' + text + "</div>";
+    if (type === "missed" && this.state.transcript.length > 0) {
+      const retryBtn = document.createElement("button");
+      retryBtn.className = "retry-btn";
+      retryBtn.textContent = "Retry from here";
+      retryBtn.addEventListener("click", () => this.retryFromPoint(index));
       div.appendChild(retryBtn);
     }
     return div;
   },
 
   async retryFromPoint(missedIndex) {
-    // Find the point in the transcript where this failure happened
-    // Replay conversation up to that point, then let user try again
-    const allMissed = this.state.coachingData?.missed || [];
+    const allMissed = this.state.coachingData ? this.state.coachingData.missed : [];
     const failurePoint = allMissed[missedIndex];
     if (!failurePoint) return;
-
-    // Start a new call with context about what to retry
     this.state.transcript = [];
     this.goToStep(2);
-    document.getElementById('callChat').innerHTML = '';
-    this.addChatMessage('system', 'Retrying from your failure point: ' + failurePoint);
-    this.updateCallStatus('Reconnecting for retry...');
-
+    document.getElementById("callChat").innerHTML = "";
+    this.addChatMessage("system", "Retrying. Focus on: " + failurePoint);
+    this.updateCallStatus("Reconnecting...");
     try {
-      const sessionResponse = await fetch('/api/realtime-session', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          product: this.state.product,
-          script: this.state.script,
-          customer_type: this.state.product.customer_type,
-          sales_channel: this.state.product.sales_channel,
-          difficulty: this.state.product.difficulty,
-          mode: 'roleplay',
-          product_url_content: this.state.product.product_url_content,
-          retry_context: failurePoint
-        })
-      });
-
-      if (!sessionResponse.ok) throw new Error('Failed to create retry session');
-      const sessionData = await sessionResponse.json();
-      await this.connectRealtime(sessionData.client_secret, 'roleplay');
-      this.addChatMessage('system', 'The call is starting fresh. Try a different approach this time.');
+      this.state.localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
     } catch (err) {
-      this.addChatMessage('system', 'Could not start retry: ' + err.message);
+      this.addChatMessage("system", "Mic access denied.");
+      return;
     }
+    this.state.callActive = true;
+    setTimeout(() => { if (this.state.callActive) this.prospectGreets(); }, 500);
+  },
+
+  removeLastPlaceholder() {
+    const chat = document.getElementById("callChat");
+    const last = chat.lastElementChild;
+    if (last && last.textContent === "...") last.remove();
   },
 
   addChatMessage(role, text) {
-    const chat = document.getElementById('callChat');
-    const bubble = document.createElement('div');
-    bubble.className = 'call-bubble ' + role;
+    const chat = document.getElementById("callChat");
+    const bubble = document.createElement("div");
+    bubble.className = "call-bubble " + role;
     bubble.textContent = text;
     chat.appendChild(bubble);
     chat.scrollTop = chat.scrollHeight;
   },
 
   updateCallStatus(text) {
-    const el = document.getElementById('callStatusLabel');
+    const el = document.getElementById("callStatusLabel");
     if (el) el.textContent = text;
   },
 
   goToStep(step) {
     this.state.step = step;
-    document.getElementById('step1').classList.toggle('hidden', step !== 1);
-    document.getElementById('step2').classList.toggle('hidden', step !== 2);
-    document.getElementById('step2').classList.toggle('visible', step === 2);
-    document.getElementById('step3').classList.toggle('hidden', step !== 3);
-    document.getElementById('step3').classList.toggle('visible', step === 3);
-    document.querySelectorAll('.step-dot').forEach((dot, i) => {
-      dot.classList.remove('active', 'done');
-      if (i + 1 < step) { dot.classList.add('done'); } else if (i + 1 === step) { dot.classList.add('active'); }
+    document.getElementById("step1").classList.toggle("hidden", step !== 1);
+    document.getElementById("step2").classList.toggle("hidden", step !== 2);
+    document.getElementById("step2").classList.toggle("visible", step === 2);
+    document.getElementById("step3").classList.toggle("hidden", step !== 3);
+    document.getElementById("step3").classList.toggle("visible", step === 3);
+    document.querySelectorAll(".step-dot").forEach((dot, i) => {
+      dot.classList.remove("active", "done");
+      if (i + 1 < step) dot.classList.add("done");
+      else if (i + 1 === step) dot.classList.add("active");
     });
     window.scrollTo(0, 0);
   },
 
   showError(message) {
-    const el = document.getElementById('generateError');
+    const el = document.getElementById("generateError");
     el.textContent = message;
-    el.classList.remove('hidden');
-    setTimeout(() => el.classList.add('hidden'), 5000);
+    el.classList.remove("hidden");
+    setTimeout(() => el.classList.add("hidden"), 5000);
   },
 
   async handleSubscription() {
-    const btn = document.getElementById('btnSubscribe');
+    const btn = document.getElementById("btnSubscribe");
     btn.disabled = true;
-    btn.textContent = 'Redirecting to checkout...';
+    btn.textContent = "Redirecting to checkout...";
     try {
-      const response = await fetch('/api/create-checkout-session', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+      const response = await fetch("/api/create-checkout-session", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({})
       });
-      if (!response.ok) { const err = await response.json().catch(() => ({})); throw new Error(err.error || 'Failed'); }
+      if (!response.ok) throw new Error("Failed");
       const result = await response.json();
-      if (result.url) { window.location.href = result.url; } else { throw new Error('No checkout URL'); }
+      if (result.url) window.location.href = result.url;
+      else throw new Error("No URL");
     } catch (err) {
-      console.error('Checkout error:', err);
       btn.disabled = false;
-      btn.textContent = 'Start 7-Day Free Trial';
-      this.showError('Could not connect to checkout. Please try again.');
+      btn.textContent = "Start 7-Day Free Trial";
+      this.showError("Could not connect to checkout.");
     }
   }
 };
 
-document.addEventListener('DOMContentLoaded', () => App.init());
+document.addEventListener("DOMContentLoaded", () => App.init());

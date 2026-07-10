@@ -50,6 +50,14 @@ const Demo = {
     if (typeof Avatar !== "undefined") {
       Avatar.init("demoAvatar");
     }
+    // Init the small widget avatar (idle mode, always visible)
+    if (typeof Avatar !== "undefined") {
+      // Create a second avatar instance for the widget
+      this.widgetAvatar = Object.create(Avatar);
+      this.widgetAvatar.init("demoWidgetAvatar");
+      this.widgetAvatar.setMode("idle");
+      this.widgetAvatar.setColorScheme("default");
+    }
   },
 
   setAvatarMode(mode, label) {

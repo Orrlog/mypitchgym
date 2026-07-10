@@ -304,3 +304,18 @@ body {
   letter-spacing: 1px;
   transition: color 0.3s;
 }
+/* Widget avatar */
+.demo-widget-avatar {
+  display: flex;
+  justify-content: center;
+  margin-bottom: 8px;
+}
+.demo-widget-avatar canvas {
+  border-radius: 50%;
+  filter: drop-shadow(0 0 8px rgba(99, 102, 241, 0.3));
+  animation: avatarFloat 3s ease-in-out infinite;
+}
+@keyframes avatarFloat {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-4px); }
+}

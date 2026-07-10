@@ -470,7 +470,7 @@ const App = {
     if (titleEl) titleEl.innerHTML = "AI Salesperson <span>Transcript Review</span>";
 
     if (transcriptEl) {
-      transcriptEl.innerHTML = '<div style="color:#94a3b8;font-size:0.9rem;line-height:1.6;">Here''s what the AI salesperson said during the role reversal. Review the techniques used to handle your objections.</div>';
+      transcriptEl.innerHTML = "Here's what the AI salesperson said during the role reversal. Review the techniques used to handle your objections.";
     }
 
     if (listEl) {

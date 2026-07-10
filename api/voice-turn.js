@@ -125,7 +125,7 @@ module.exports = async (req, res) => {
     // Voice selection: explicit override > mode-based default
     // reversal = onyx (deep male salesperson), roleplay = nova (expressive female prospect)
     // Override with echo for the demo (male prospect)
-    const ttsVoice = voice_override || (mode === "reversal" ? "onyx" : "nova");
+    const ttsVoice = voice_override || (mode === "reversal" ? "onyx" : "shimmer");
 
     // Use tts-1-hd for natural intonation and emotion (tts-1 sounds flat/robotic)
     const ttsResponse = await openai.audio.speech.create({
@@ -133,7 +133,7 @@ module.exports = async (req, res) => {
       voice: ttsVoice,
       input: aiText,
       response_format: "mp3",
-      speed: 1.05
+      speed: 1.1
     });
 
     const audioArrayBuffer = await ttsResponse.arrayBuffer();

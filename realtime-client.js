@@ -1,6 +1,7 @@
 // MyPitchGym - Realtime WebRTC Client
 // Connects to OpenAI Realtime API via WebRTC for sub-2-second voice latency.
-// Handles: peer connection, audio streaming, transcript tracking, avatar lip-sync.
+// Uses server-side SDP proxy to keep the API key on the server.
+// Instructions are sent via the data channel after the connection is established.
 
 const RealtimeClient = {
   pc: null,
@@ -10,7 +11,6 @@ const RealtimeClient = {
   analyser: null,
   source: null,
   localStream: null,
-  clientSecret: null,
   callActive: false,
   transcript: [],
 
@@ -23,10 +23,9 @@ const RealtimeClient = {
   onError: null,
   onConnected: null,
 
-  async connect(sessionData, localStream) {
+  async connect(config) {
     this.transcript = [];
-    this.localStream = localStream;
-    this.clientSecret = sessionData.client_secret;
+    this.localStream = config.localStream;
     this.callActive = true;
 
     try {
@@ -41,15 +40,13 @@ const RealtimeClient = {
       // Handle incoming audio track from OpenAI
       this.pc.ontrack = (e) => {
         this.audioEl.srcObject = e.streams[0];
-
-        // Connect to audio analyser for avatar lip-sync
         this.setupAudioAnalyser(this.audioEl);
       };
 
       // Add local microphone track
-      const audioTracks = localStream.getAudioTracks();
+      const audioTracks = this.localStream.getAudioTracks();
       if (audioTracks.length > 0) {
-        this.pc.addTrack(audioTracks[0], localStream);
+        this.pc.addTrack(audioTracks[0], this.localStream);
       }
 
       // Set up data channel for events (transcript, speech detection)
@@ -63,26 +60,27 @@ const RealtimeClient = {
       // Wait for ICE gathering to complete
       await this.waitForIceGathering();
 
-      // Send offer to OpenAI Realtime via SDP exchange
-      const sdpResponse = await fetch("https://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview", {
+      // Send the SDP offer to our server, which proxies it to OpenAI
+      const sdpResponse = await fetch("/api/realtime-connect", {
         method: "POST",
-        headers: {
-          "Authorization": "Bearer " + this.clientSecret,
-          "Content-Type": "application/sdp"
-        },
-        body: this.pc.localDescription.sdp
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sdp: this.pc.localDescription.sdp })
       });
 
       if (!sdpResponse.ok) {
-        const errText = await sdpResponse.text();
-        throw new Error("Realtime SDP exchange failed (" + sdpResponse.status + "): " + errText.substring(0, 300));
+        const err = await sdpResponse.json();
+        throw new Error(err.error || "SDP exchange failed");
       }
 
-      const answerSdp = await sdpResponse.text();
+      const { sdp: answerSdp } = await sdpResponse.json();
       await this.pc.setRemoteDescription({ type: "answer", sdp: answerSdp });
 
-      // Connection established - AI will start speaking based on session instructions
-      if (this.onConnected) this.onConnected();
+      // Wait for data channel to open, then send instructions
+      this.waitForDataChannel(() => {
+        // Send session instructions via data channel
+        this.sendSessionConfig(config);
+        if (this.onConnected) this.onConnected();
+      });
 
     } catch (err) {
       if (this.onError) this.onError(err.message);
@@ -90,18 +88,58 @@ const RealtimeClient = {
     }
   },
 
-  setupDataChannel() {
-    this.dc.onopen = () => {
-      // Data channel open - we can send/receive events
+  waitForDataChannel(callback) {
+    if (this.dc && this.dc.readyState === "open") {
+      callback();
+      return;
+    }
+    let attempts = 0;
+    const check = () => {
+      if (this.dc && this.dc.readyState === "open") {
+        callback();
+      } else if (attempts < 50) {
+        attempts++;
+        setTimeout(check, 100);
+      } else {
+        // Timeout - call onConnected anyway, instructions might arrive late
+        if (this.onConnected) this.onConnected();
+      }
     };
+    check();
+  },
+
+  sendSessionConfig(config) {
+    if (!this.dc || this.dc.readyState !== "open") return;
+
+    // Send instructions to the AI via data channel
+    if (config.instructions) {
+      this.dc.send(JSON.stringify({
+        type: "session.update",
+        session: {
+          instructions: config.instructions,
+          voice: config.voice || "shimmer",
+          turn_detection: {
+            type: "server_vad",
+            threshold: 0.5,
+            prefix_padding_ms: 300,
+            silence_duration_ms: 500
+          },
+          input_audio_transcription: {
+            model: "whisper-1"
+          }
+        }
+      }));
+    }
+  },
+
+  setupDataChannel() {
+    this.dc.onopen = () => {};
 
     this.dc.onmessage = (event) => {
       try {
         const data = JSON.parse(event.data);
         this.handleEvent(data);
-      } catch (e) {
-        // Ignore malformed messages
-      }
+      } catch (e) {}
     };
 
     this.dc.onerror = (err) => {
@@ -116,16 +154,14 @@ const RealtimeClient = {
   handleEvent(data) {
     switch (data.type) {
       case "input_audio_buffer.speech_started":
-        // User started speaking - can use this for interruption UI
+        // User started speaking - interrupt AI
         if (this.onAIStopSpeaking) this.onAIStopSpeaking();
         break;
 
       case "input_audio_buffer.speech_stopped":
-        // User stopped speaking
         break;
 
       case "input_audio_buffer.committed":
-        // User audio chunk committed for processing
         break;
 
       case "conversation.item.created":
@@ -147,16 +183,13 @@ const RealtimeClient = {
         break;
 
       case "response.audio.delta":
-        // AI audio streaming in - avatar should be speaking
         if (this.onAIStartSpeaking) this.onAIStartSpeaking();
         break;
 
       case "response.audio_transcript.delta":
-        // Partial transcript of AI speech
         break;
 
       case "response.done":
-        // AI finished responding
         break;
 
       case "error":
@@ -212,7 +245,6 @@ const RealtimeClient = {
     });
   },
 
-  // Force AI to take a turn (used for role reversal start)
   sendTextMessage(text) {
     if (!this.dc || this.dc.readyState !== "open") return;
     this.dc.send(JSON.stringify({
@@ -226,7 +258,6 @@ const RealtimeClient = {
     this.dc.send(JSON.stringify({ type: "response.create" }));
   },
 
-  // Manually trigger AI response
   triggerResponse() {
     if (!this.dc || this.dc.readyState !== "open") return;
     this.dc.send(JSON.stringify({ type: "response.create" }));
@@ -254,6 +285,10 @@ const RealtimeClient = {
     if (this.analyser) {
       try { this.analyser.disconnect(); } catch (e) {}
       this.analyser = null;
+    }
+    if (this.inputAnalyser) {
+      try { this.inputAnalyser.disconnect(); } catch (e) {}
+      this.inputAnalyser = null;
     }
     if (this.audioContext) {
       try { this.audioContext.close(); } catch (e) {}

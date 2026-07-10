@@ -100,79 +100,60 @@ const Demo = {
 
     this.setStatus("Connecting to AI...");
 
-    // Create Realtime session
-    try {
-      const sessionResponse = await fetch("/api/realtime-session", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          product: this.demoProduct,
-          script: null,
-          customer_type: "skeptic",
-          sales_channel: "phone",
-          difficulty: "beginner",
-          mode: "roleplay",
-          voice_override: "echo"
-        })
-      });
+    // Build instructions for the AI
+    const instructions = PromptBuilder.buildInstructions({
+      product: this.demoProduct,
+      script: null,
+      customer_type: "skeptic",
+      sales_channel: "phone",
+      difficulty: "beginner",
+      mode: "roleplay"
+    });
 
-      if (!sessionResponse.ok) {
-        const err = await sessionResponse.json();
-        throw new Error(err.error || "Session creation failed");
+    // Set up Realtime client callbacks
+    RealtimeClient.onAIStartSpeaking = () => {
+      this.state.aiSpeaking = true;
+      this.setStatus("");
+      this.setAvatarMode("speaking", "Speaking");
+      this.connectAvatarToAudio();
+    };
+    RealtimeClient.onAIStopSpeaking = () => {
+      this.state.aiSpeaking = false;
+    };
+    RealtimeClient.onUserText = (text) => {
+      if (text && text.trim()) {
+        this.addChatMessage("user", text);
       }
-
-      const sessionData = await sessionResponse.json();
-
-      // Set up Realtime client callbacks
-      RealtimeClient.onAIStartSpeaking = () => {
-        this.state.aiSpeaking = true;
-        this.setStatus("");
-        this.setAvatarMode("speaking", "Speaking");
-        this.connectAvatarToAudio();
-      };
-      RealtimeClient.onAIStopSpeaking = () => {
-        this.state.aiSpeaking = false;
-      };
-      RealtimeClient.onUserText = (text) => {
-        if (text && text.trim()) {
-          this.addChatMessage("user", text);
-        }
-      };
-      RealtimeClient.onAIText = (text) => {
-        if (text && text.trim()) {
-          this.addChatMessage("ai", text);
-        }
-      };
-      RealtimeClient.onTranscriptUpdate = (transcript) => {
-        this.state.transcript = transcript;
-      };
-      RealtimeClient.onError = (msg) => {
-        this.addChatMessage("system", "Connection issue: " + msg);
-        this.setStatus("Connection issue");
-      };
-      RealtimeClient.onConnected = () => {
-        this.setStatus("");
-        this.setAvatarMode("listening", "Listening");
-        // For roleplay, the AI prospect should greet first
-        // The session instructions tell the AI to answer the phone - it will respond automatically
-        // For role reversal, trigger the AI to start pitching
-      };
-
-      // Connect via WebRTC
-      await RealtimeClient.connect(sessionData, this.state.localStream);
-
-      // After connection, trigger the AI to start (prospect answers phone)
+    };
+    RealtimeClient.onAIText = (text) => {
+      if (text && text.trim()) {
+        this.addChatMessage("ai", text);
+      }
+    };
+    RealtimeClient.onTranscriptUpdate = (transcript) => {
+      this.state.transcript = transcript;
+    };
+    RealtimeClient.onError = (msg) => {
+      this.addChatMessage("system", "Connection issue: " + msg);
+      this.setStatus("Connection issue");
+    };
+    RealtimeClient.onConnected = () => {
+      this.setStatus("");
+      this.setAvatarMode("listening", "Listening");
+      // Trigger the prospect to answer the phone
       setTimeout(() => {
-        if (this.state.callActive && RealtimeClient.dc && RealtimeClient.dc.readyState === "open") {
+        if (this.state.callActive) {
           RealtimeClient.sendTextMessage("Hello, is this the homeowner?");
         }
-      }, 1000);
+      }, 500);
+    };
 
-    } catch (err) {
-      this.addChatMessage("system", "Failed to connect: " + err.message);
-      this.setStatus("Failed");
-      this.endCall(false);
-    }
+    // Connect via WebRTC
+    await RealtimeClient.connect({
+      localStream: this.state.localStream,
+      instructions: instructions,
+      voice: "echo"
+    });
   },
 
   connectAvatarToAudio() {

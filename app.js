@@ -168,67 +168,52 @@ const App = {
 
     this.updateCallStatus("Connecting to AI...");
 
-    try {
-      const sessionResponse = await fetch("/api/realtime-session", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          product: this.state.product,
-          script: this.state.script,
-          customer_type: this.state.product.customer_type,
-          sales_channel: this.state.product.sales_channel,
-          difficulty: this.state.product.difficulty,
-          mode: mode
-        })
-      });
+    // Build instructions client-side
+    const instructions = PromptBuilder.buildInstructions({
+      product: this.state.product,
+      script: this.state.script,
+      customer_type: this.state.product.customer_type,
+      sales_channel: this.state.product.sales_channel,
+      difficulty: this.state.product.difficulty,
+      mode: mode,
+      product_url_content: this.state.product.product_url_content
+    });
 
-      if (!sessionResponse.ok) {
-        const err = await sessionResponse.json();
-        throw new Error(err.error || "Session creation failed");
+    // Set up Realtime client callbacks
+    RealtimeClient.onAIStartSpeaking = () => {
+      this.updateCallStatus("");
+      this.setAvatarMode("speaking", this.state.callMode === "reversal" ? "AI Pitching" : "Speaking");
+      this.connectAvatarToAudio();
+    };
+    RealtimeClient.onAIStopSpeaking = () => {
+      if (this.state.callActive) {
+        this.setAvatarMode("listening", this.state.callMode === "reversal" ? "Your Turn" : "Listening");
+        this.updateCallStatus("Your turn - just talk");
       }
+    };
+    RealtimeClient.onUserText = (text) => {
+      if (text && text.trim()) {
+        this.addChatMessage("user", text);
+      }
+    };
+    RealtimeClient.onAIText = (text) => {
+      if (text && text.trim()) {
+        this.addChatMessage("ai", text);
+      }
+    };
+    RealtimeClient.onTranscriptUpdate = (transcript) => {
+      this.state.transcript = transcript;
+    };
+    RealtimeClient.onError = (msg) => {
+      this.addChatMessage("system", "Connection issue: " + msg);
+      this.updateCallStatus("Connection issue");
+    };
+    RealtimeClient.onConnected = () => {
+      this.state.callActive = true;
+      this.updateCallStatus("Connected - just talk naturally");
+      this.setAvatarMode("listening", this.state.callMode === "reversal" ? "AI Pitches" : "Listening");
 
-      const sessionData = await sessionResponse.json();
-
-      // Set up Realtime client callbacks
-      RealtimeClient.onAIStartSpeaking = () => {
-        this.updateCallStatus("");
-        this.setAvatarMode("speaking", this.state.callMode === "reversal" ? "AI Pitching" : "Speaking");
-        this.connectAvatarToAudio();
-      };
-      RealtimeClient.onAIStopSpeaking = () => {
-        if (this.state.callActive) {
-          this.setAvatarMode("listening", this.state.callMode === "reversal" ? "Your Turn" : "Listening");
-          this.updateCallStatus("Your turn - just talk");
-        }
-      };
-      RealtimeClient.onUserText = (text) => {
-        if (text && text.trim()) {
-          this.addChatMessage("user", text);
-        }
-      };
-      RealtimeClient.onAIText = (text) => {
-        if (text && text.trim()) {
-          this.addChatMessage("ai", text);
-        }
-      };
-      RealtimeClient.onTranscriptUpdate = (transcript) => {
-        this.state.transcript = transcript;
-      };
-      RealtimeClient.onError = (msg) => {
-        this.addChatMessage("system", "Connection issue: " + msg);
-        this.updateCallStatus("Connection issue");
-      };
-      RealtimeClient.onConnected = () => {
-        this.state.callActive = true;
-        this.updateCallStatus("Connected - just talk naturally");
-        this.setAvatarMode("listening", this.state.callMode === "reversal" ? "AI Pitches" : "Listening");
-      };
-
-      // Connect via WebRTC
-      await RealtimeClient.connect(sessionData, this.state.localStream);
-
-      // For roleplay: trigger the prospect to answer the phone
-      // For reversal: trigger the AI salesperson to start pitching
+      // Trigger AI to start
       setTimeout(() => {
         if (RealtimeClient.dc && RealtimeClient.dc.readyState === "open") {
           if (mode === "reversal") {
@@ -237,12 +222,16 @@ const App = {
             RealtimeClient.sendTextMessage("Hello, is this the homeowner?");
           }
         }
-      }, 1500);
+      }, 800);
+    };
 
-    } catch (err) {
-      this.addChatMessage("system", "Failed to connect: " + err.message);
-      this.updateCallStatus("Failed");
-    }
+    // Connect via WebRTC
+    const voice = mode === "reversal" ? "onyx" : "shimmer";
+    await RealtimeClient.connect({
+      localStream: this.state.localStream,
+      instructions: instructions,
+      voice: voice
+    });
   },
 
   connectAvatarToAudio() {

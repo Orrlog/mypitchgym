@@ -1,7 +1,7 @@
-// MyPitchGym - Realtime WebRTC Client
-// Connects to OpenAI Realtime API via WebRTC for sub-2-second voice latency.
-// Uses server-side SDP proxy to keep the API key on the server.
-// Instructions are sent via the data channel after the connection is established.
+// MyPitchGym - Realtime WebRTC Client (GA API)
+// Connects browser directly to OpenAI Realtime API using an ephemeral client_secret.
+// Flow: server creates session -> browser gets client_secret -> browser establishes
+// WebRTC connection directly with OpenAI using that secret.
 
 const RealtimeClient = {
   pc: null,
@@ -29,11 +29,33 @@ const RealtimeClient = {
     this.callActive = true;
 
     try {
-      // Create WebRTC peer connection
+      // Step 1: Get ephemeral session from our server
+      const sessionResponse = await fetch('/api/realtime-session', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          instructions: config.instructions,
+          voice: config.voice || 'shimmer'
+        })
+      });
+
+      if (!sessionResponse.ok) {
+        const err = await sessionResponse.json();
+        throw new Error(err.error || 'Session creation failed');
+      }
+
+      const sessionData = await sessionResponse.json();
+      const clientSecret = sessionData.client_secret;
+
+      if (!clientSecret) {
+        throw new Error('No client_secret returned from session');
+      }
+
+      // Step 2: Create WebRTC peer connection
       this.pc = new RTCPeerConnection();
 
       // Set up audio element for AI audio output
-      this.audioEl = document.createElement("audio");
+      this.audioEl = document.createElement('audio');
       this.audioEl.autoplay = true;
       document.body.appendChild(this.audioEl);
 
@@ -49,86 +71,45 @@ const RealtimeClient = {
         this.pc.addTrack(audioTracks[0], this.localStream);
       }
 
-      // Set up data channel for events (transcript, speech detection)
-      this.dc = this.pc.createDataChannel("oai-events");
+      // Set up data channel for events
+      this.dc = this.pc.createDataChannel('oai-events');
       this.setupDataChannel();
 
-      // Create and set local description (offer)
+      // Step 3: Create SDP offer
       const offer = await this.pc.createOffer();
       await this.pc.setLocalDescription(offer);
 
-      // Wait for ICE gathering to complete
+      // Wait for ICE gathering
       await this.waitForIceGathering();
 
-      // Send the SDP offer to our server, which proxies it to OpenAI
-      const sdpResponse = await fetch("/api/realtime-connect", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ sdp: this.pc.localDescription.sdp })
-      });
+      // Step 4: Send offer to OpenAI using the client_secret
+      // The GA API uses the ephemeral token as the Bearer token
+      const sdpResponse = await fetch(
+        'https://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview',
+        {
+          method: 'POST',
+          headers: {
+            'Authorization': 'Bearer ' + clientSecret,
+            'Content-Type': 'application/sdp'
+          },
+          body: this.pc.localDescription.sdp
+        }
+      );
 
       if (!sdpResponse.ok) {
-        const err = await sdpResponse.json();
-        throw new Error(err.error || "SDP exchange failed");
+        const errText = await sdpResponse.text();
+        throw new Error('Realtime connection failed (' + sdpResponse.status + '): ' + errText.substring(0, 300));
       }
 
-      const { sdp: answerSdp } = await sdpResponse.json();
-      await this.pc.setRemoteDescription({ type: "answer", sdp: answerSdp });
+      const answerSdp = await sdpResponse.text();
+      await this.pc.setRemoteDescription({ type: 'answer', sdp: answerSdp });
 
-      // Wait for data channel to open, then send instructions
-      this.waitForDataChannel(() => {
-        // Send session instructions via data channel
-        this.sendSessionConfig(config);
-        if (this.onConnected) this.onConnected();
-      });
+      // Connection established
+      if (this.onConnected) this.onConnected();
 
     } catch (err) {
       if (this.onError) this.onError(err.message);
       this.disconnect();
-    }
-  },
-
-  waitForDataChannel(callback) {
-    if (this.dc && this.dc.readyState === "open") {
-      callback();
-      return;
-    }
-    let attempts = 0;
-    const check = () => {
-      if (this.dc && this.dc.readyState === "open") {
-        callback();
-      } else if (attempts < 50) {
-        attempts++;
-        setTimeout(check, 100);
-      } else {
-        // Timeout - call onConnected anyway, instructions might arrive late
-        if (this.onConnected) this.onConnected();
-      }
-    };
-    check();
-  },
-
-  sendSessionConfig(config) {
-    if (!this.dc || this.dc.readyState !== "open") return;
-
-    // Send instructions to the AI via data channel
-    if (config.instructions) {
-      this.dc.send(JSON.stringify({
-        type: "session.update",
-        session: {
-          instructions: config.instructions,
-          voice: config.voice || "shimmer",
-          turn_detection: {
-            type: "server_vad",
-            threshold: 0.5,
-            prefix_padding_ms: 300,
-            silence_duration_ms: 500
-          },
-          input_audio_transcription: {
-            model: "whisper-1"
-          }
-        }
-      }));
     }
   },
 
@@ -143,38 +124,37 @@ const RealtimeClient = {
     };
 
     this.dc.onerror = (err) => {
-      if (this.onError) this.onError("Data channel error");
+      if (this.onError) this.onError('Data channel error');
     };
 
     this.dc.onclose = () => {
-      if (this.callActive && this.onError) this.onError("Connection closed");
+      if (this.callActive && this.onError) this.onError('Connection closed');
     };
   },
 
   handleEvent(data) {
     switch (data.type) {
-      case "input_audio_buffer.speech_started":
-        // User started speaking - interrupt AI
+      case 'input_audio_buffer.speech_started':
         if (this.onAIStopSpeaking) this.onAIStopSpeaking();
         break;
 
-      case "input_audio_buffer.speech_stopped":
+      case 'input_audio_buffer.speech_stopped':
         break;
 
-      case "input_audio_buffer.committed":
+      case 'input_audio_buffer.committed':
         break;
 
-      case "conversation.item.created":
-        if (data.item && data.item.type === "message") {
+      case 'conversation.item.created':
+        if (data.item && data.item.type === 'message') {
           const role = data.item.role;
           const content = data.item.content;
           if (content && content.length > 0 && content[0].transcript) {
             const text = content[0].transcript;
-            if (role === "user") {
-              this.transcript.push({ role: "user", content: text });
+            if (role === 'user') {
+              this.transcript.push({ role: 'user', content: text });
               if (this.onUserText) this.onUserText(text);
-            } else if (role === "assistant") {
-              this.transcript.push({ role: "assistant", content: text });
+            } else if (role === 'assistant') {
+              this.transcript.push({ role: 'assistant', content: text });
               if (this.onAIText) this.onAIText(text);
             }
             if (this.onTranscriptUpdate) this.onTranscriptUpdate(this.transcript);
@@ -182,18 +162,18 @@ const RealtimeClient = {
         }
         break;
 
-      case "response.audio.delta":
+      case 'response.audio.delta':
         if (this.onAIStartSpeaking) this.onAIStartSpeaking();
         break;
 
-      case "response.audio_transcript.delta":
+      case 'response.audio_transcript.delta':
         break;
 
-      case "response.done":
+      case 'response.done':
         break;
 
-      case "error":
-        if (this.onError) this.onError(data.error ? data.error.message : "Realtime API error");
+      case 'error':
+        if (this.onError) this.onError(data.error ? data.error.message : 'Realtime API error');
         break;
     }
   },
@@ -203,7 +183,7 @@ const RealtimeClient = {
       if (!this.audioContext) {
         this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
       }
-      if (this.audioContext.state === "suspended") this.audioContext.resume();
+      if (this.audioContext.state === 'suspended') this.audioContext.resume();
 
       this.source = this.audioContext.createMediaElementSource(audioEl);
       this.analyser = this.audioContext.createAnalyser();
@@ -228,13 +208,13 @@ const RealtimeClient = {
 
   waitForIceGathering() {
     return new Promise((resolve) => {
-      if (this.pc.iceGatheringState === "complete") {
+      if (this.pc.iceGatheringState === 'complete') {
         resolve();
         return;
       }
       let attempts = 0;
       const checkState = () => {
-        if (this.pc.iceGatheringState === "complete" || attempts >= 20) {
+        if (this.pc.iceGatheringState === 'complete' || attempts >= 20) {
           resolve();
         } else {
           attempts++;
@@ -246,21 +226,21 @@ const RealtimeClient = {
   },
 
   sendTextMessage(text) {
-    if (!this.dc || this.dc.readyState !== "open") return;
+    if (!this.dc || this.dc.readyState !== 'open') return;
     this.dc.send(JSON.stringify({
-      type: "conversation.item.create",
+      type: 'conversation.item.create',
       item: {
-        type: "message",
-        role: "user",
-        content: [{ type: "input_text", text: text }]
+        type: 'message',
+        role: 'user',
+        content: [{ type: 'input_text', text: text }]
       }
     }));
-    this.dc.send(JSON.stringify({ type: "response.create" }));
+    this.dc.send(JSON.stringify({ type: 'response.create' }));
   },
 
   triggerResponse() {
-    if (!this.dc || this.dc.readyState !== "open") return;
-    this.dc.send(JSON.stringify({ type: "response.create" }));
+    if (!this.dc || this.dc.readyState !== 'open') return;
+    this.dc.send(JSON.stringify({ type: 'response.create' }));
   },
 
   disconnect() {
@@ -285,10 +265,6 @@ const RealtimeClient = {
     if (this.analyser) {
       try { this.analyser.disconnect(); } catch (e) {}
       this.analyser = null;
-    }
-    if (this.inputAnalyser) {
-      try { this.inputAnalyser.disconnect(); } catch (e) {}
-      this.inputAnalyser = null;
     }
     if (this.audioContext) {
       try { this.audioContext.close(); } catch (e) {}

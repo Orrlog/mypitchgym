@@ -413,12 +413,81 @@ const App = {
     }
     this.updateCallStatus("Call ended");
     if (this.state.transcript.length < 2) {
-      this.addChatMessage("system", "Call ended. Not enough conversation for coaching.");
+      this.addChatMessage("system", "Call ended. Not enough conversation.");
       setTimeout(() => this.goToStep(1), 1500);
+      return;
+    }
+    // Role reversal calls: show a transcript review instead of coaching
+    if (this.state.callMode === "reversal") {
+      this.showReversalTranscript();
       return;
     }
     this.updateCallStatus("Analyzing your call...");
     this.getCoaching();
+  },
+
+  showReversalTranscript() {
+    // Build a readable transcript of the AI salesperson's pitch
+    const transcriptEl = document.getElementById("coachingScore");
+    const listEl = document.getElementById("coachingList");
+    const titleEl = document.querySelector("#step3 .script-title");
+
+    if (titleEl) titleEl.innerHTML = "AI Salesperson <span>Transcript Review</span>";
+
+    if (transcriptEl) {
+      transcriptEl.innerHTML = '<div style="color:#94a3b8;font-size:0.9rem;line-height:1.6;">Here''s what the AI salesperson said during the role reversal. Review the techniques used to handle your objections.</div>';
+    }
+
+    if (listEl) {
+      listEl.innerHTML = "";
+      const wrapper = document.createElement("div");
+      wrapper.style.cssText = "background:#0f172a;border-radius:12px;padding:20px;max-height:450px;overflow-y:auto;";
+
+      for (const msg of this.state.transcript) {
+        const row = document.createElement("div");
+        row.style.cssText = "margin-bottom:14px;padding-bottom:14px;border-bottom:1px solid #1e293b;";
+        const label = document.createElement("div");
+        label.style.cssText = "font-size:0.75rem;font-weight:700;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;";
+        const text = document.createElement("div");
+        text.style.cssText = "font-size:0.9rem;line-height:1.6;color:#cbd5e1;";
+
+        if (msg.role === "assistant") {
+          label.textContent = "AI Salesperson";
+          label.style.color = "#6366f1";
+          text.style.color = "#e2e8f0";
+        } else if (msg.role === "user") {
+          label.textContent = "You (Prospect)";
+          label.style.color = "#22c55e";
+        } else {
+          label.textContent = "System";
+          label.style.color = "#64748b";
+        }
+        text.textContent = msg.content;
+        row.appendChild(label);
+        row.appendChild(text);
+        wrapper.appendChild(row);
+      }
+
+      listEl.appendChild(wrapper);
+    }
+
+    // Update the action buttons for reversal mode
+    const actions = document.querySelector("#step3 .script-actions");
+    if (actions) {
+      actions.innerHTML = '<button id="btnPracticeAgain" class="btn-primary">Practice Myself</button>' +
+        '<button id="btnNewSetup" class="btn-secondary">New Product Setup</button>' +
+        '<button id="btnRoleReverseAfter" class="btn-secondary">Run It Again</button>';
+      // Re-bind the buttons
+      document.getElementById("btnPracticeAgain").addEventListener("click", () => this.startCall("roleplay"));
+      document.getElementById("btnNewSetup").addEventListener("click", () => {
+        this.goToStep(1);
+        this.state.script = null;
+        this.state.transcript = [];
+      });
+      document.getElementById("btnRoleReverseAfter").addEventListener("click", () => this.startCall("reversal"));
+    }
+
+    this.goToStep(3);
   },
 
   async getCoaching() {

@@ -19,7 +19,7 @@ const Demo = {
     silenceStart: null,
     isRecording: false,
     minSpeechMs: 800,
-    silenceThreshold: 1500,
+    silenceThreshold: 2000,
     noiseFloor: 8,
     hasSpeech: false
   },
@@ -142,7 +142,8 @@ const Demo = {
           customer_type: "skeptic",
           sales_channel: "phone",
           difficulty: "beginner",
-          mode: "roleplay"
+          mode: "roleplay",
+          voice_override: "echo"
         })
       });
 
@@ -153,6 +154,7 @@ const Demo = {
       const last = chat.lastElementChild;
       if (last && last.textContent === "...") last.remove();
 
+      if (!this.state.callActive) { this.state.isProcessing = false; return; }
       this.addChatMessage("ai", result.ai_text);
       this.state.transcript.push({ role: "user", content: "Hello, is this the homeowner?" });
       this.state.transcript.push({ role: "assistant", content: result.ai_text });
@@ -183,12 +185,14 @@ const Demo = {
 
     audio.onended = () => {
       this.state.aiAudio = null;
+      if (!this.state.callActive) return;
       this.setStatus("Your turn - just talk");
       this.startRecording();
     };
 
     audio.onerror = () => {
       this.state.aiAudio = null;
+      if (!this.state.callActive) return;
       this.setStatus("Your turn - just talk");
       this.startRecording();
     };
@@ -298,12 +302,16 @@ const Demo = {
           customer_type: "skeptic",
           sales_channel: "phone",
           difficulty: "beginner",
-          mode: "roleplay"
+          mode: "roleplay",
+          voice_override: "echo"
         })
       });
 
       if (!response.ok) throw new Error("Server error");
       const result = await response.json();
+
+      // Guard: if call ended while we were processing, drop the response
+      if (!this.state.callActive) return;
 
       if (result.user_text && result.user_text.trim()) {
         this.addChatMessage("user", result.user_text);

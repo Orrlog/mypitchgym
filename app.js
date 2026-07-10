@@ -22,7 +22,7 @@ const App = {
     isRecording: false,
     hasSpeech: false,
     noiseFloor: 8,
-    silenceThreshold: 1500,
+    silenceThreshold: 2000,
     coachingData: null
   },
 
@@ -194,6 +194,7 @@ const App = {
       });
       if (!response.ok) throw new Error("Failed");
       const result = await response.json();
+      if (!this.state.callActive) { this.state.isProcessing = false; return; }
       this.removeLastPlaceholder();
       this.addChatMessage("ai", result.ai_text);
       this.state.transcript.push({ role: "user", content: "Hello, is this the homeowner?" });
@@ -228,6 +229,7 @@ const App = {
       });
       if (!response.ok) throw new Error("Failed");
       const result = await response.json();
+      if (!this.state.callActive) { this.state.isProcessing = false; return; }
       document.getElementById("callChat").innerHTML = "";
       this.addChatMessage("system", "The AI is now the salesperson. Respond as the prospect.");
       this.addChatMessage("ai", result.ai_text);
@@ -269,8 +271,8 @@ const App = {
     if (this.state.aiAudio) { this.state.aiAudio.pause(); this.state.aiAudio = null; }
     const audio = new Audio("data:audio/mp3;base64," + base64Audio);
     this.state.aiAudio = audio;
-    audio.onended = () => { this.state.aiAudio = null; this.updateCallStatus("Your turn - just talk"); this.startRecording(); };
-    audio.onerror = () => { this.state.aiAudio = null; this.updateCallStatus("Your turn - just talk"); this.startRecording(); };
+    audio.onended = () => { this.state.aiAudio = null; if (!this.state.callActive) return; this.updateCallStatus("Your turn - just talk"); this.startRecording(); };
+    audio.onerror = () => { this.state.aiAudio = null; if (!this.state.callActive) return; this.updateCallStatus("Your turn - just talk"); this.startRecording(); };
     audio.play();
   },
 
@@ -371,6 +373,8 @@ const App = {
       });
       if (!response.ok) throw new Error("Server error");
       const result = await response.json();
+      // Guard: if call ended while processing, drop the response
+      if (!this.state.callActive) { this.state.isProcessing = false; return; }
       if (result.user_text && result.user_text.trim()) {
         this.addChatMessage("user", result.user_text);
         this.state.transcript.push({ role: "user", content: result.user_text });

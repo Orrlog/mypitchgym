@@ -25,7 +25,7 @@ module.exports = async (req, res) => {
   }
 
   try {
-    const { audio, transcript, product, script, customer_type, sales_channel, difficulty, mode, product_url_content, retry_context } = req.body;
+    const { audio, transcript, product, script, customer_type, sales_channel, difficulty, mode, product_url_content, retry_context, voice_override } = req.body;
 
     let userMessage = req.body.text || "";
     
@@ -110,13 +110,14 @@ module.exports = async (req, res) => {
       model: "gpt-4o-mini",
       messages: messages,
       temperature: 0.7,
-      max_tokens: 150
+      max_tokens: 120
     });
 
     const aiText = chatResponse.choices[0].message.content;
 
-    // Use male voice (onyx) for role reversal mode, female-ish (alloy) for prospect mode
-    const ttsVoice = mode === "reversal" ? "onyx" : "alloy";
+    // Voice selection: explicit override > mode-based default
+    // reversal = onyx (male salesperson), roleplay = echo (male prospect), default = alloy
+    const ttsVoice = voice_override || (mode === "reversal" ? "onyx" : "echo");
 
     const ttsResponse = await openai.audio.speech.create({
       model: "tts-1",

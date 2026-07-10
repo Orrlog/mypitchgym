@@ -1,4 +1,6 @@
-// MyPitchGym - App Logic (Whisper + GPT + OpenAI TTS)
+// MyPitchGym - App Logic
+// Uses OpenAI Realtime API (WebRTC) for real-time voice conversation.
+// Sub-2-second latency, natural interruptions, streaming audio.
 
 const App = {
   state: {
@@ -11,18 +13,6 @@ const App = {
     callActive: false,
     isProcessing: false,
     localStream: null,
-    mediaRecorder: null,
-    audioChunks: [],
-    aiAudio: null,
-    recordTimeout: null,
-    audioContext: null,
-    analyser: null,
-    vadInterval: null,
-    silenceStart: null,
-    isRecording: false,
-    hasSpeech: false,
-    noiseFloor: 8,
-    silenceThreshold: 2000,
     coachingData: null
   },
 
@@ -176,293 +166,126 @@ const App = {
       return;
     }
 
-    // Set up audio analyser for silence detection
-    this.setupVAD();
-
-    this.state.callActive = true;
-    this.updateCallStatus("Calling...");
-
-    if (mode === "reversal") {
-      await this.startRoleReversal();
-    } else {
-      setTimeout(() => { if (this.state.callActive) this.prospectGreets(); }, 800);
-    }
-  },
-
-  async prospectGreets() {
-    this.state.isProcessing = true;
-    this.updateCallStatus("Ringing...");
-    this.addChatMessage("ai", "...");
+    this.updateCallStatus("Connecting to AI...");
 
     try {
-      const response = await fetch("/api/voice-turn", {
+      const sessionResponse = await fetch("/api/realtime-session", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          text: "Hello, is this the homeowner?",
-          transcript: [],
           product: this.state.product,
           script: this.state.script,
           customer_type: this.state.product.customer_type,
           sales_channel: this.state.product.sales_channel,
           difficulty: this.state.product.difficulty,
-          mode: "roleplay"
+          mode: mode
         })
       });
-      if (!response.ok) throw new Error("Failed");
-      const result = await response.json();
-      if (!this.state.callActive) { this.state.isProcessing = false; return; }
-      this.removeLastPlaceholder();
-      this.addChatMessage("ai", result.ai_text);
-      this.state.transcript.push({ role: "user", content: "Hello, is this the homeowner?" });
-      this.state.transcript.push({ role: "assistant", content: result.ai_text });
-      this.playAudio(result.ai_audio);
-      this.state.isProcessing = false;
-    } catch (err) {
-      this.removeLastPlaceholder();
-      this.addChatMessage("system", "Connection failed: " + err.message);
-      this.state.isProcessing = false;
-    }
-  },
 
-  async startRoleReversal() {
-    this.state.isProcessing = true;
-    this.addChatMessage("ai", "...");
+      if (!sessionResponse.ok) {
+        const err = await sessionResponse.json();
+        throw new Error(err.error || "Session creation failed");
+      }
 
-    try {
-      const response = await fetch("/api/voice-turn", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          text: "Start the call. You are the salesperson.",
-          transcript: [],
-          product: this.state.product,
-          script: this.state.script,
-          customer_type: this.state.product.customer_type,
-          sales_channel: this.state.product.sales_channel,
-          difficulty: this.state.product.difficulty,
-          mode: "reversal"
-        })
-      });
-      if (!response.ok) throw new Error("Failed");
-      const result = await response.json();
-      if (!this.state.callActive) { this.state.isProcessing = false; return; }
-      document.getElementById("callChat").innerHTML = "";
-      this.addChatMessage("system", "The AI is now the salesperson. Respond as the prospect.");
-      this.addChatMessage("ai", result.ai_text);
-      this.state.transcript.push({ role: "user", content: "Start the call." });
-      this.state.transcript.push({ role: "assistant", content: result.ai_text });
-      this.playAudio(result.ai_audio);
-      this.state.isProcessing = false;
-    } catch (err) {
-      document.getElementById("callChat").innerHTML = "";
-      this.addChatMessage("system", "Could not start. Try again.");
-      this.state.isProcessing = false;
-    }
-  },
+      const sessionData = await sessionResponse.json();
 
-  setupVAD() {
-    try {
-      this.state.audioContext = new (window.AudioContext || window.webkitAudioContext)();
-      const source = this.state.audioContext.createMediaStreamSource(this.state.localStream);
-      this.state.analyser = this.state.audioContext.createAnalyser();
-      this.state.analyser.fftSize = 512;
-      this.state.analyser.smoothingTimeConstant = 0.6;
-      source.connect(this.state.analyser);
-    } catch(e) {}
-  },
-
-  detectSpeech() {
-    if (!this.state.analyser) return false;
-    const data = new Uint8Array(this.state.analyser.frequencyBinCount);
-    this.state.analyser.getByteFrequencyData(data);
-    let sum = 0;
-    for (let i = 0; i < data.length; i++) sum += data[i];
-    const avg = sum / data.length;
-    return avg > this.state.noiseFloor;
-  },
-
-  playAudio(base64Audio) {
-    if (!base64Audio) { this.startRecording(); return; }
-    this.updateCallStatus("AI speaking...");
-    this.setAvatarMode("speaking", this.state.callMode === "reversal" ? "AI Pitching" : "Speaking");
-    if (this.state.aiAudio) { this.state.aiAudio.pause(); this.state.aiAudio = null; }
-    const audio = new Audio("data:audio/mp3;base64," + base64Audio);
-    this.state.aiAudio = audio;
-    if (typeof Avatar !== "undefined") Avatar.connectAudio(audio);
-    audio.onended = () => {
-      this.state.aiAudio = null;
-      if (typeof Avatar !== "undefined") Avatar.disconnectAudio();
-      if (!this.state.callActive) return;
-      this.updateCallStatus("Your turn - just talk");
-      this.startRecording();
-    };
-    audio.onerror = () => {
-      this.state.aiAudio = null;
-      if (typeof Avatar !== "undefined") Avatar.disconnectAudio();
-      if (!this.state.callActive) return;
-      this.updateCallStatus("Your turn - just talk");
-      this.startRecording();
-    };
-    audio.play();
-  },
-
-  startRecording() {
-    if (!this.state.callActive || this.state.isProcessing) return;
-    if (!this.state.localStream) return;
-
-    this.state.audioChunks = [];
-    this.state.hasSpeech = false;
-    this.state.silenceStart = null;
-
-    const mediaRecorder = new MediaRecorder(this.state.localStream);
-    this.state.mediaRecorder = mediaRecorder;
-    this.state.isRecording = true;
-
-    mediaRecorder.ondataavailable = (e) => { if (e.data.size > 0) this.state.audioChunks.push(e.data); };
-    mediaRecorder.onstop = () => {
-      if (!this.state.callActive) return;
-      if (this.state.audioChunks.length === 0) return;
-
-      // If no speech was detected, restart instead of sending silence
-      if (!this.state.hasSpeech) {
-        if (this.state.callActive && !this.state.isProcessing) {
-          setTimeout(() => this.startRecording(), 200);
+      // Set up Realtime client callbacks
+      RealtimeClient.onAIStartSpeaking = () => {
+        this.updateCallStatus("");
+        this.setAvatarMode("speaking", this.state.callMode === "reversal" ? "AI Pitching" : "Speaking");
+        this.connectAvatarToAudio();
+      };
+      RealtimeClient.onAIStopSpeaking = () => {
+        if (this.state.callActive) {
+          this.setAvatarMode("listening", this.state.callMode === "reversal" ? "Your Turn" : "Listening");
+          this.updateCallStatus("Your turn - just talk");
         }
-        return;
-      }
+      };
+      RealtimeClient.onUserText = (text) => {
+        if (text && text.trim()) {
+          this.addChatMessage("user", text);
+        }
+      };
+      RealtimeClient.onAIText = (text) => {
+        if (text && text.trim()) {
+          this.addChatMessage("ai", text);
+        }
+      };
+      RealtimeClient.onTranscriptUpdate = (transcript) => {
+        this.state.transcript = transcript;
+      };
+      RealtimeClient.onError = (msg) => {
+        this.addChatMessage("system", "Connection issue: " + msg);
+        this.updateCallStatus("Connection issue");
+      };
+      RealtimeClient.onConnected = () => {
+        this.state.callActive = true;
+        this.updateCallStatus("Connected - just talk naturally");
+        this.setAvatarMode("listening", this.state.callMode === "reversal" ? "AI Pitches" : "Listening");
+      };
 
-      const blob = new Blob(this.state.audioChunks, { type: "audio/webm" });
-      const reader = new FileReader();
-      reader.onloadend = () => { const base64 = reader.result.split(",")[1]; this.sendAudioToServer(base64); };
-      reader.readAsDataURL(blob);
-    };
+      // Connect via WebRTC
+      await RealtimeClient.connect(sessionData, this.state.localStream);
 
-    mediaRecorder.start();
-    this.updateCallStatus("Listening...");
-    this.setAvatarMode("listening", this.state.callMode === "reversal" ? "Your Turn" : "Listening");
-
-    // VAD loop: check every 100ms for speech/silence
-    this.state.vadInterval = setInterval(() => {
-      if (!this.state.isRecording || !this.state.callActive) {
-        clearInterval(this.state.vadInterval);
-        return;
-      }
-
-      const isSpeaking = this.detectSpeech();
-
-      if (isSpeaking) {
-        this.state.hasSpeech = true;
-        this.state.silenceStart = null;
-      } else {
-        if (this.state.hasSpeech) {
-          if (!this.state.silenceStart) {
-            this.state.silenceStart = Date.now();
+      // For roleplay: trigger the prospect to answer the phone
+      // For reversal: trigger the AI salesperson to start pitching
+      setTimeout(() => {
+        if (RealtimeClient.dc && RealtimeClient.dc.readyState === "open") {
+          if (mode === "reversal") {
+            RealtimeClient.sendTextMessage("Start the call. You are the salesperson. Begin with your opener.");
           } else {
-            const silenceMs = Date.now() - this.state.silenceStart;
-            if (silenceMs >= this.state.silenceThreshold) {
-              clearInterval(this.state.vadInterval);
-              this.state.isRecording = false;
-              if (this.state.mediaRecorder && this.state.mediaRecorder.state === "recording") {
-                this.state.mediaRecorder.stop();
-              }
-            }
+            RealtimeClient.sendTextMessage("Hello, is this the homeowner?");
           }
         }
-      }
-    }, 100);
+      }, 1500);
 
-    // Safety: max 30s of talking before cutoff
-    this.state.recordTimeout = setTimeout(() => {
-      if (this.state.isRecording && this.state.callActive) {
-        clearInterval(this.state.vadInterval);
-        this.state.isRecording = false;
-        if (this.state.mediaRecorder && this.state.mediaRecorder.state === "recording") {
-          this.state.mediaRecorder.stop();
-        }
-      }
-    }, 30000);
+    } catch (err) {
+      this.addChatMessage("system", "Failed to connect: " + err.message);
+      this.updateCallStatus("Failed");
+    }
   },
 
-  async sendAudioToServer(base64Audio) {
-    if (!this.state.callActive) return;
-    this.state.isProcessing = true;
-    this.updateCallStatus("Processing...");
-    this.setAvatarMode("idle", "Processing");
-    try {
-      const response = await fetch("/api/voice-turn", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          audio: base64Audio,
-          transcript: this.state.transcript,
-          product: this.state.product,
-          script: this.state.script,
-          customer_type: this.state.product.customer_type,
-          sales_channel: this.state.product.sales_channel,
-          difficulty: this.state.product.difficulty,
-          mode: this.state.callMode
-        })
-      });
-      if (!response.ok) throw new Error("Server error");
-      const result = await response.json();
-      // Guard: if call ended while processing, drop the response
-      if (!this.state.callActive) { this.state.isProcessing = false; return; }
-      if (result.user_text && result.user_text.trim()) {
-        this.addChatMessage("user", result.user_text);
-        this.state.transcript.push({ role: "user", content: result.user_text });
-      }
-      if (result.ai_text) {
-        this.addChatMessage("ai", result.ai_text);
-        this.state.transcript.push({ role: "assistant", content: result.ai_text });
-        this.playAudio(result.ai_audio);
-      }
-      this.state.isProcessing = false;
-    } catch (err) {
-      this.addChatMessage("system", "Connection issue. Retrying...");
-      this.state.isProcessing = false;
-      setTimeout(() => { if (this.state.callActive) this.startRecording(); }, 1000);
+  connectAvatarToAudio() {
+    if (typeof Avatar !== "undefined" && RealtimeClient.audioEl) {
+      try {
+        Avatar.disconnectAudio();
+        Avatar.connectAudio(RealtimeClient.audioEl);
+      } catch (e) {}
     }
   },
 
   endCall() {
     this.state.callActive = false;
     this.state.isProcessing = false;
-    this.state.isRecording = false;
-    if (this.state.recordTimeout) { clearTimeout(this.state.recordTimeout); this.state.recordTimeout = null; }
-    if (this.state.vadInterval) { clearInterval(this.state.vadInterval); this.state.vadInterval = null; }
-    if (this.state.mediaRecorder && this.state.mediaRecorder.state === "recording") {
-      try { this.state.mediaRecorder.stop(); } catch(e) {}
-    }
+
+    RealtimeClient.disconnect();
+
     if (this.state.localStream) {
       this.state.localStream.getTracks().forEach(t => t.stop());
       this.state.localStream = null;
     }
-    if (this.state.aiAudio) { this.state.aiAudio.pause(); this.state.aiAudio = null; }
-    if (this.state.audioContext) {
-      try { this.state.audioContext.close(); } catch(e) {}
-      this.state.audioContext = null;
-      this.state.analyser = null;
-    }
+
     this.setAvatarMode("idle", "");
     if (typeof Avatar !== "undefined") Avatar.disconnectAudio();
     this.updateCallStatus("Call ended");
+
     if (this.state.transcript.length < 2) {
       this.addChatMessage("system", "Call ended. Not enough conversation.");
       setTimeout(() => this.goToStep(1), 1500);
       return;
     }
-    // Role reversal calls: show a transcript review instead of coaching
+
+    // Role reversal calls: show transcript review
     if (this.state.callMode === "reversal") {
       this.showReversalTranscript();
       return;
     }
+
     this.updateCallStatus("Analyzing your call...");
     this.getCoaching();
   },
 
   showReversalTranscript() {
-    // Build a readable transcript of the AI salesperson's pitch
     const transcriptEl = document.getElementById("coachingScore");
     const listEl = document.getElementById("coachingList");
     const titleEl = document.querySelector("#step3 .script-title");
@@ -470,7 +293,7 @@ const App = {
     if (titleEl) titleEl.innerHTML = "AI Salesperson <span>Transcript Review</span>";
 
     if (transcriptEl) {
-      transcriptEl.innerHTML = "Here's what the AI salesperson said during the role reversal. Review the techniques used to handle your objections.";
+      transcriptEl.innerHTML = "<div style=\"color:#94a3b8;font-size:0.9rem;\">Here is what the AI salesperson said during the role reversal. Review the techniques used to handle your objections.</div>";
     }
 
     if (listEl) {
@@ -506,13 +329,12 @@ const App = {
       listEl.appendChild(wrapper);
     }
 
-    // Update the action buttons for reversal mode
+    // Update action buttons for reversal mode
     const actions = document.querySelector("#step3 .script-actions");
     if (actions) {
       actions.innerHTML = '<button id="btnPracticeAgain" class="btn-primary">Practice Myself</button>' +
         '<button id="btnNewSetup" class="btn-secondary">New Product Setup</button>' +
         '<button id="btnRoleReverseAfter" class="btn-secondary">Run It Again</button>';
-      // Re-bind the buttons
       document.getElementById("btnPracticeAgain").addEventListener("click", () => this.startCall("roleplay"));
       document.getElementById("btnNewSetup").addEventListener("click", () => {
         this.goToStep(1);
@@ -589,21 +411,7 @@ const App = {
     document.getElementById("callChat").innerHTML = "";
     this.addChatMessage("system", "Retrying. Focus on: " + failurePoint);
     this.updateCallStatus("Reconnecting...");
-    try {
-      this.state.localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    } catch (err) {
-      this.addChatMessage("system", "Mic access denied.");
-      return;
-    }
-    this.setupVAD();
-    this.state.callActive = true;
-    setTimeout(() => { if (this.state.callActive) this.prospectGreets(); }, 500);
-  },
-
-  removeLastPlaceholder() {
-    const chat = document.getElementById("callChat");
-    const last = chat.lastElementChild;
-    if (last && last.textContent === "...") last.remove();
+    this.startCall("roleplay");
   },
 
   addChatMessage(role, text) {

@@ -1,6 +1,6 @@
 // MyPitchGym - Landing Page Demo Call
-// Uses silence detection (VAD) so the user can talk naturally -
-// the AI responds when the user stops talking, not on a fixed timer.
+// Uses OpenAI Realtime API (WebRTC) for sub-2-second voice latency.
+// The AI responds almost instantly - like a real conversation.
 
 const Demo = {
   state: {
@@ -8,20 +8,9 @@ const Demo = {
     transcript: [],
     timeRemaining: 120,
     timerInterval: null,
-    mediaRecorder: null,
-    audioChunks: [],
     localStream: null,
     isProcessing: false,
-    aiAudio: null,
-    audioContext: null,
-    analyser: null,
-    vadInterval: null,
-    silenceStart: null,
-    isRecording: false,
-    minSpeechMs: 800,
-    silenceThreshold: 2000,
-    noiseFloor: 8,
-    hasSpeech: false
+    aiSpeaking: false
   },
 
   // A product most people understand: home security systems
@@ -46,13 +35,10 @@ const Demo = {
       const w = document.getElementById("demoWidget");
       if (w) w.classList.add("visible");
     }, 3000);
-    // Init avatar
     if (typeof Avatar !== "undefined") {
       Avatar.init("demoAvatar");
     }
-    // Init the small widget avatar (idle mode, always visible)
     if (typeof Avatar !== "undefined") {
-      // Create a second avatar instance for the widget
       this.widgetAvatar = Object.create(Avatar);
       this.widgetAvatar.init("demoWidgetAvatar");
       this.widgetAvatar.setMode("idle");
@@ -112,52 +98,14 @@ const Demo = {
       return;
     }
 
-    // Set up audio analyser for VAD
-    this.setupVAD();
+    this.setStatus("Connecting to AI...");
 
-    this.setStatus("Calling...");
-    setTimeout(() => {
-      if (!this.state.callActive) return;
-      this.prospectGreets();
-    }, 800);
-  },
-
-  setupVAD() {
+    // Create Realtime session
     try {
-      this.state.audioContext = new (window.AudioContext || window.webkitAudioContext)();
-      const source = this.state.audioContext.createMediaStreamSource(this.state.localStream);
-      this.state.analyser = this.state.audioContext.createAnalyser();
-      this.state.analyser.fftSize = 512;
-      this.state.analyser.smoothingTimeConstant = 0.6;
-      source.connect(this.state.analyser);
-    } catch(e) {
-      // VAD won't work, will fall back to timed recording
-    }
-  },
-
-  // Check if there's speech above the noise floor
-  detectSpeech() {
-    if (!this.state.analyser) return false;
-    const data = new Uint8Array(this.state.analyser.frequencyBinCount);
-    this.state.analyser.getByteFrequencyData(data);
-    let sum = 0;
-    for (let i = 0; i < data.length; i++) sum += data[i];
-    const avg = sum / data.length;
-    return avg > this.state.noiseFloor;
-  },
-
-  async prospectGreets() {
-    this.state.isProcessing = true;
-    this.setStatus("Ringing...");
-    this.addChatMessage("ai", "...");
-
-    try {
-      const response = await fetch("/api/voice-turn", {
+      const sessionResponse = await fetch("/api/realtime-session", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          text: "Hello, is this the homeowner?",
-          transcript: [],
           product: this.demoProduct,
           script: null,
           customer_type: "skeptic",
@@ -168,199 +116,71 @@ const Demo = {
         })
       });
 
-      if (!response.ok) throw new Error("Failed to connect");
-      const result = await response.json();
-
-      const chat = document.getElementById("demoChat");
-      const last = chat.lastElementChild;
-      if (last && last.textContent === "...") last.remove();
-
-      if (!this.state.callActive) { this.state.isProcessing = false; return; }
-      this.addChatMessage("ai", result.ai_text);
-      this.state.transcript.push({ role: "user", content: "Hello, is this the homeowner?" });
-      this.state.transcript.push({ role: "assistant", content: result.ai_text });
-
-      this.playAudio(result.ai_audio);
-      this.state.isProcessing = false;
-    } catch (err) {
-      const chat = document.getElementById("demoChat");
-      const last = chat.lastElementChild;
-      if (last && last.textContent === "...") last.remove();
-      this.addChatMessage("system", "Connection failed: " + err.message);
-      this.setStatus("Failed");
-      this.state.isProcessing = false;
-    }
-  },
-
-  playAudio(base64Audio) {
-    if (!base64Audio) { this.startRecording(); return; }
-    this.setStatus("AI speaking...");
-    this.setAvatarMode("speaking", "Speaking");
-
-    if (this.state.aiAudio) {
-      this.state.aiAudio.pause();
-      this.state.aiAudio = null;
-    }
-
-    const audio = new Audio("data:audio/mp3;base64," + base64Audio);
-    this.state.aiAudio = audio;
-
-    // Connect avatar to this audio element for lip-sync
-    if (typeof Avatar !== "undefined") {
-      Avatar.connectAudio(audio);
-    }
-
-    audio.onended = () => {
-      this.state.aiAudio = null;
-      if (typeof Avatar !== "undefined") { Avatar.disconnectAudio(); }
-      if (!this.state.callActive) return;
-      this.setStatus("Your turn - just talk");
-      this.startRecording();
-    };
-
-    audio.onerror = () => {
-      this.state.aiAudio = null;
-      if (typeof Avatar !== "undefined") { Avatar.disconnectAudio(); }
-      if (!this.state.callActive) return;
-      this.setStatus("Your turn - just talk");
-      this.startRecording();
-    };
-
-    audio.play();
-  },
-
-  startRecording() {
-    if (!this.state.callActive || this.state.isProcessing) return;
-    if (!this.state.localStream) return;
-
-    this.state.audioChunks = [];
-    this.state.hasSpeech = false;
-    this.state.silenceStart = null;
-
-    const mediaRecorder = new MediaRecorder(this.state.localStream);
-    this.state.mediaRecorder = mediaRecorder;
-    this.state.isRecording = true;
-
-    mediaRecorder.ondataavailable = (e) => {
-      if (e.data.size > 0) this.state.audioChunks.push(e.data);
-    };
-
-    mediaRecorder.onstop = () => {
-      if (!this.state.callActive) return;
-      if (this.state.audioChunks.length === 0) return;
-
-      // If no speech was detected, just restart recording instead of sending silence
-      if (!this.state.hasSpeech) {
-        if (this.state.callActive && !this.state.isProcessing) {
-          setTimeout(() => this.startRecording(), 200);
-        }
-        return;
+      if (!sessionResponse.ok) {
+        const err = await sessionResponse.json();
+        throw new Error(err.error || "Session creation failed");
       }
 
-      const blob = new Blob(this.state.audioChunks, { type: "audio/webm" });
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        const base64 = reader.result.split(",")[1];
-        this.sendAudioToServer(base64);
+      const sessionData = await sessionResponse.json();
+
+      // Set up Realtime client callbacks
+      RealtimeClient.onAIStartSpeaking = () => {
+        this.state.aiSpeaking = true;
+        this.setStatus("");
+        this.setAvatarMode("speaking", "Speaking");
+        this.connectAvatarToAudio();
       };
-      reader.readAsDataURL(blob);
-    };
-
-    mediaRecorder.start();
-    this.setStatus("Listening...");
-    this.setAvatarMode("listening", "Listening");
-
-    // VAD loop: check every 100ms if user is speaking or has gone silent
-    this.state.vadInterval = setInterval(() => {
-      if (!this.state.isRecording || !this.state.callActive) {
-        clearInterval(this.state.vadInterval);
-        return;
-      }
-
-      const isSpeaking = this.detectSpeech();
-
-      if (isSpeaking) {
-        this.state.hasSpeech = true;
-        this.state.silenceStart = null;
-      } else {
-        // Silence detected
-        if (this.state.hasSpeech) {
-          // User was speaking, now silent - start counting silence
-          if (!this.state.silenceStart) {
-            this.state.silenceStart = Date.now();
-          } else {
-            const silenceMs = Date.now() - this.state.silenceStart;
-            // If silence has lasted long enough after speech, stop and send
-            if (silenceMs >= this.state.silenceThreshold) {
-              clearInterval(this.state.vadInterval);
-              this.state.isRecording = false;
-              if (this.state.mediaRecorder && this.state.mediaRecorder.state === "recording") {
-                this.state.mediaRecorder.stop();
-              }
-            }
-          }
+      RealtimeClient.onAIStopSpeaking = () => {
+        this.state.aiSpeaking = false;
+      };
+      RealtimeClient.onUserText = (text) => {
+        if (text && text.trim()) {
+          this.addChatMessage("user", text);
         }
-      }
-    }, 100);
-
-    // Safety timeout: if user talks for a very long time (30s), cut them off
-    this.state.recordTimeout = setTimeout(() => {
-      if (this.state.isRecording && this.state.callActive) {
-        clearInterval(this.state.vadInterval);
-        this.state.isRecording = false;
-        if (this.state.mediaRecorder && this.state.mediaRecorder.state === "recording") {
-          this.state.mediaRecorder.stop();
+      };
+      RealtimeClient.onAIText = (text) => {
+        if (text && text.trim()) {
+          this.addChatMessage("ai", text);
         }
-      }
-    }, 30000);
+      };
+      RealtimeClient.onTranscriptUpdate = (transcript) => {
+        this.state.transcript = transcript;
+      };
+      RealtimeClient.onError = (msg) => {
+        this.addChatMessage("system", "Connection issue: " + msg);
+        this.setStatus("Connection issue");
+      };
+      RealtimeClient.onConnected = () => {
+        this.setStatus("");
+        this.setAvatarMode("listening", "Listening");
+        // For roleplay, the AI prospect should greet first
+        // The session instructions tell the AI to answer the phone - it will respond automatically
+        // For role reversal, trigger the AI to start pitching
+      };
+
+      // Connect via WebRTC
+      await RealtimeClient.connect(sessionData, this.state.localStream);
+
+      // After connection, trigger the AI to start (prospect answers phone)
+      setTimeout(() => {
+        if (this.state.callActive && RealtimeClient.dc && RealtimeClient.dc.readyState === "open") {
+          RealtimeClient.sendTextMessage("Hello, is this the homeowner?");
+        }
+      }, 1000);
+
+    } catch (err) {
+      this.addChatMessage("system", "Failed to connect: " + err.message);
+      this.setStatus("Failed");
+      this.endCall(false);
+    }
   },
 
-  async sendAudioToServer(base64Audio) {
-    if (!this.state.callActive) return;
-    this.state.isProcessing = true;
-    this.setStatus("Processing...");
-    this.setAvatarMode("idle", "Processing");
-
-    try {
-      const response = await fetch("/api/voice-turn", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          audio: base64Audio,
-          transcript: this.state.transcript,
-          product: this.demoProduct,
-          script: null,
-          customer_type: "skeptic",
-          sales_channel: "phone",
-          difficulty: "beginner",
-          mode: "roleplay",
-          voice_override: "echo"
-        })
-      });
-
-      if (!response.ok) throw new Error("Server error");
-      const result = await response.json();
-
-      // Guard: if call ended while we were processing, drop the response
-      if (!this.state.callActive) return;
-
-      if (result.user_text && result.user_text.trim()) {
-        this.addChatMessage("user", result.user_text);
-        this.state.transcript.push({ role: "user", content: result.user_text });
-      }
-
-      if (result.ai_text) {
-        this.addChatMessage("ai", result.ai_text);
-        this.state.transcript.push({ role: "assistant", content: result.ai_text });
-        this.playAudio(result.ai_audio);
-      }
-
-      this.state.isProcessing = false;
-    } catch (err) {
-      this.addChatMessage("system", "Connection issue. Retrying...");
-      this.setStatus("Retry...");
-      this.state.isProcessing = false;
-      setTimeout(() => { if (this.state.callActive) this.startRecording(); }, 1000);
+  connectAvatarToAudio() {
+    if (typeof Avatar !== "undefined" && RealtimeClient.audioEl) {
+      try {
+        Avatar.disconnectAudio();
+        Avatar.connectAudio(RealtimeClient.audioEl);
+      } catch (e) {}
     }
   },
 
@@ -377,8 +197,6 @@ const Demo = {
 
   stopTimer() {
     if (this.state.timerInterval) { clearInterval(this.state.timerInterval); this.state.timerInterval = null; }
-    if (this.state.recordTimeout) { clearTimeout(this.state.recordTimeout); this.state.recordTimeout = null; }
-    if (this.state.vadInterval) { clearInterval(this.state.vadInterval); this.state.vadInterval = null; }
   },
 
   updateTimerDisplay() {
@@ -397,27 +215,17 @@ const Demo = {
   endCall(timedOut) {
     this.state.callActive = false;
     this.state.isProcessing = false;
-    this.state.isRecording = false;
     this.stopTimer();
 
-    if (this.state.mediaRecorder && this.state.mediaRecorder.state === "recording") {
-      try { this.state.mediaRecorder.stop(); } catch(e) {}
-    }
+    RealtimeClient.disconnect();
+
     if (this.state.localStream) {
       this.state.localStream.getTracks().forEach(t => t.stop());
       this.state.localStream = null;
     }
-    if (this.state.aiAudio) {
-      this.state.aiAudio.pause();
-      this.state.aiAudio = null;
-    }
-    if (this.state.audioContext) {
-      try { this.state.audioContext.close(); } catch(e) {}
-      this.state.audioContext = null;
-      this.state.analyser = null;
-    }
 
     this.setAvatarMode("idle", "");
+    if (typeof Avatar !== "undefined") Avatar.disconnectAudio();
     document.getElementById("demoStartBtn").style.display = "none";
     document.getElementById("demoChat").style.display = "none";
     document.querySelector(".demo-timer-bar").style.display = "none";

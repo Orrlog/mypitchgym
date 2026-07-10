@@ -31,6 +31,17 @@ const App = {
     this.setupCallHandlers();
     this.setupScriptHandlers();
     this.loadSubscriptionStatus();
+    if (typeof Avatar !== "undefined") {
+      Avatar.init("appAvatar");
+    }
+  },
+
+  setAvatarMode(mode, label) {
+    if (typeof Avatar !== "undefined") {
+      Avatar.setMode(mode);
+    }
+    const el = document.getElementById("appAvatarLabel");
+    if (el) el.textContent = label || "";
   },
 
   loadSubscriptionStatus() {
@@ -143,8 +154,14 @@ const App = {
     }
 
     const banner = document.getElementById("roleReverseBanner");
-    if (mode === "reversal") banner.classList.remove("hidden");
-    else banner.classList.add("hidden");
+    if (mode === "reversal") {
+      banner.classList.remove("hidden");
+      if (typeof Avatar !== "undefined") Avatar.setColorScheme("reversal");
+    } else {
+      banner.classList.add("hidden");
+      if (typeof Avatar !== "undefined") Avatar.setColorScheme("default");
+    }
+    this.setAvatarMode("idle", "Connecting");
 
     this.goToStep(2);
     document.getElementById("callChat").innerHTML = "";
@@ -268,11 +285,25 @@ const App = {
   playAudio(base64Audio) {
     if (!base64Audio) { this.startRecording(); return; }
     this.updateCallStatus("AI speaking...");
+    this.setAvatarMode("speaking", this.state.callMode === "reversal" ? "AI Pitching" : "Speaking");
     if (this.state.aiAudio) { this.state.aiAudio.pause(); this.state.aiAudio = null; }
     const audio = new Audio("data:audio/mp3;base64," + base64Audio);
     this.state.aiAudio = audio;
-    audio.onended = () => { this.state.aiAudio = null; if (!this.state.callActive) return; this.updateCallStatus("Your turn - just talk"); this.startRecording(); };
-    audio.onerror = () => { this.state.aiAudio = null; if (!this.state.callActive) return; this.updateCallStatus("Your turn - just talk"); this.startRecording(); };
+    if (typeof Avatar !== "undefined") Avatar.connectAudio(audio);
+    audio.onended = () => {
+      this.state.aiAudio = null;
+      if (typeof Avatar !== "undefined") Avatar.disconnectAudio();
+      if (!this.state.callActive) return;
+      this.updateCallStatus("Your turn - just talk");
+      this.startRecording();
+    };
+    audio.onerror = () => {
+      this.state.aiAudio = null;
+      if (typeof Avatar !== "undefined") Avatar.disconnectAudio();
+      if (!this.state.callActive) return;
+      this.updateCallStatus("Your turn - just talk");
+      this.startRecording();
+    };
     audio.play();
   },
 
@@ -309,6 +340,7 @@ const App = {
 
     mediaRecorder.start();
     this.updateCallStatus("Listening...");
+    this.setAvatarMode("listening", this.state.callMode === "reversal" ? "Your Turn" : "Listening");
 
     // VAD loop: check every 100ms for speech/silence
     this.state.vadInterval = setInterval(() => {
@@ -356,6 +388,7 @@ const App = {
     if (!this.state.callActive) return;
     this.state.isProcessing = true;
     this.updateCallStatus("Processing...");
+    this.setAvatarMode("idle", "Processing");
     try {
       const response = await fetch("/api/voice-turn", {
         method: "POST",
@@ -411,6 +444,8 @@ const App = {
       this.state.audioContext = null;
       this.state.analyser = null;
     }
+    this.setAvatarMode("idle", "");
+    if (typeof Avatar !== "undefined") Avatar.disconnectAudio();
     this.updateCallStatus("Call ended");
     if (this.state.transcript.length < 2) {
       this.addChatMessage("system", "Call ended. Not enough conversation.");

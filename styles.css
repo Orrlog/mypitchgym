@@ -285,3 +285,22 @@ body {
   .demo-modal { padding: 20px; }
   .demo-chat { max-height: 260px; }
 }
+
+/* Avatar styles */
+.demo-avatar-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  margin-bottom: 12px;
+}
+.demo-avatar-wrap canvas {
+  border-radius: 50%;
+}
+.demo-avatar-label {
+  font-size: 0.75rem;
+  color: #64748b;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  transition: color 0.3s;
+}

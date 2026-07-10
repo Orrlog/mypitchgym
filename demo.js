@@ -46,6 +46,18 @@ const Demo = {
       const w = document.getElementById("demoWidget");
       if (w) w.classList.add("visible");
     }, 3000);
+    // Init avatar
+    if (typeof Avatar !== "undefined") {
+      Avatar.init("demoAvatar");
+    }
+  },
+
+  setAvatarMode(mode, label) {
+    if (typeof Avatar !== "undefined") {
+      Avatar.setMode(mode);
+    }
+    const el = document.getElementById("demoAvatarLabel");
+    if (el) el.textContent = label || "";
   },
 
   openModal() { document.getElementById("demoModal").classList.add("visible"); },
@@ -80,6 +92,7 @@ const Demo = {
 
     this.addChatMessage("system", "Connecting call...");
     this.setStatus("Requesting microphone...");
+    this.setAvatarMode("idle", "Connecting");
     this.startTimer();
 
     try {
@@ -174,6 +187,7 @@ const Demo = {
   playAudio(base64Audio) {
     if (!base64Audio) { this.startRecording(); return; }
     this.setStatus("AI speaking...");
+    this.setAvatarMode("speaking", "Speaking");
 
     if (this.state.aiAudio) {
       this.state.aiAudio.pause();
@@ -183,8 +197,14 @@ const Demo = {
     const audio = new Audio("data:audio/mp3;base64," + base64Audio);
     this.state.aiAudio = audio;
 
+    // Connect avatar to this audio element for lip-sync
+    if (typeof Avatar !== "undefined") {
+      Avatar.connectAudio(audio);
+    }
+
     audio.onended = () => {
       this.state.aiAudio = null;
+      if (typeof Avatar !== "undefined") { Avatar.disconnectAudio(); }
       if (!this.state.callActive) return;
       this.setStatus("Your turn - just talk");
       this.startRecording();
@@ -192,6 +212,7 @@ const Demo = {
 
     audio.onerror = () => {
       this.state.aiAudio = null;
+      if (typeof Avatar !== "undefined") { Avatar.disconnectAudio(); }
       if (!this.state.callActive) return;
       this.setStatus("Your turn - just talk");
       this.startRecording();
@@ -239,6 +260,7 @@ const Demo = {
 
     mediaRecorder.start();
     this.setStatus("Listening...");
+    this.setAvatarMode("listening", "Listening");
 
     // VAD loop: check every 100ms if user is speaking or has gone silent
     this.state.vadInterval = setInterval(() => {
@@ -289,6 +311,7 @@ const Demo = {
     if (!this.state.callActive) return;
     this.state.isProcessing = true;
     this.setStatus("Processing...");
+    this.setAvatarMode("idle", "Processing");
 
     try {
       const response = await fetch("/api/voice-turn", {
@@ -386,6 +409,7 @@ const Demo = {
       this.state.analyser = null;
     }
 
+    this.setAvatarMode("idle", "");
     document.getElementById("demoStartBtn").style.display = "none";
     document.getElementById("demoChat").style.display = "none";
     document.querySelector(".demo-timer-bar").style.display = "none";

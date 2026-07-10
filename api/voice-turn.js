@@ -123,14 +123,17 @@ module.exports = async (req, res) => {
     const aiText = chatResponse.choices[0].message.content;
 
     // Voice selection: explicit override > mode-based default
-    // reversal = onyx (male salesperson), roleplay = echo (male prospect), default = alloy
-    const ttsVoice = voice_override || (mode === "reversal" ? "onyx" : "echo");
+    // reversal = onyx (deep male salesperson), roleplay = nova (expressive female prospect)
+    // Override with echo for the demo (male prospect)
+    const ttsVoice = voice_override || (mode === "reversal" ? "onyx" : "nova");
 
+    // Use tts-1-hd for natural intonation and emotion (tts-1 sounds flat/robotic)
     const ttsResponse = await openai.audio.speech.create({
-      model: "tts-1",
+      model: "tts-1-hd",
       voice: ttsVoice,
       input: aiText,
-      response_format: "mp3"
+      response_format: "mp3",
+      speed: 1.05
     });
 
     const audioArrayBuffer = await ttsResponse.arrayBuffer();

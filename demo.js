@@ -147,6 +147,7 @@ const Demo = {
     };
     RealtimeClient.onConnected = () => {
       this.setStatus("");
+      RealtimeClient.enableTranscription();
       this.setAvatarMode("listening", "Listening");
       startBtn.disabled = false;
       startBtn.textContent = "End Call";

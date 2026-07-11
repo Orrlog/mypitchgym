@@ -227,6 +227,8 @@ const App = {
     };
     RealtimeClient.onConnected = () => {
       this.state.callActive = true;
+      // Enable transcription after connection for coaching/scoring
+      RealtimeClient.enableTranscription();
       this.updateCallStatus("Connected - just talk naturally");
       this.setAvatarMode("listening", this.state.callMode === "reversal" ? "AI Pitches" : "Listening");
 
@@ -276,37 +278,45 @@ const App = {
   endCall() {
     this.state.callActive = false;
 
-    // Full cleanup
-    RealtimeClient.disconnect();
-
-    if (this.state.localStream) {
-      this.state.localStream.getTracks().forEach(t => t.stop());
-      this.state.localStream = null;
+    // Try to grab conversation history before disconnecting
+    if (RealtimeClient.dc && RealtimeClient.dc.readyState === "open") {
+      RealtimeClient.requestConversationHistory();
     }
 
-    this.setAvatarMode("idle", "");
-    if (typeof Avatar !== "undefined") Avatar.disconnectAudio();
-    this.updateCallStatus("Call ended");
+    // Small delay to let final transcript events arrive
+    setTimeout(() => {
+      RealtimeClient.disconnect();
 
-    // Re-enable buttons
-    document.getElementById("btnStartCall").disabled = false;
-    document.getElementById("btnEndCall").disabled = true;
+      if (this.state.localStream) {
+        this.state.localStream.getTracks().forEach(t => t.stop());
+        this.state.localStream = null;
+      }
 
-    if (this.state.transcript.length < 1) {
-      this.addChatMessage("system", "Call ended. Not enough conversation captured for coaching.");
-      setTimeout(() => this.goToStep(1), 1500);
-      return;
-    }
+      this.setAvatarMode("idle", "");
+      if (typeof Avatar !== "undefined") Avatar.disconnectAudio();
+      this.updateCallStatus("Call ended");
 
-    // Role reversal: show transcript review
-    if (this.state.callMode === "reversal") {
-      this.showReversalTranscript();
-      return;
-    }
+      document.getElementById("btnStartCall").disabled = false;
+      document.getElementById("btnEndCall").disabled = true;
 
-    // Roleplay: get coaching using transcript from Realtime events
-    this.updateCallStatus("Analyzing your call...");
-    this.getCoaching();
+      console.log("[App] Final transcript length:", this.state.transcript.length);
+      console.log("[App] Transcript:", JSON.stringify(this.state.transcript));
+
+      if (this.state.transcript.length < 1) {
+        this.addChatMessage("system", "Call ended. Not enough conversation captured for coaching.");
+        setTimeout(() => this.goToStep(1), 1500);
+        return;
+      }
+
+      if (this.state.callMode === "reversal") {
+        this.showReversalTranscript();
+        return;
+      }
+
+      this.updateCallStatus("Analyzing your call...");
+      this.getCoaching();
+    }, 500);
+
   },
 
   showReversalTranscript() {

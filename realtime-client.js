@@ -352,6 +352,41 @@ const RealtimeClient = {
         console.error("[Realtime] API error:", data.error);
         if (this.onError) this.onError(data.error ? data.error.message : "Realtime API error");
         break;
+
+      case "session.updated":
+        console.log("[Realtime] Session updated:", data.session ? "ok" : "unknown");
+        break;
+
+      case "conversation.created":
+        console.log("[Realtime] Conversation created");
+        break;
+
+      case "conversation.retrieved":
+        // Response to conversation.retrieve - contains full history
+        if (data.conversation && data.conversation.items) {
+          console.log("[Realtime] Retrieved conversation with " + data.conversation.items.length + " items");
+          for (const item of data.conversation.items) {
+            if (item.type === "message" && item.content) {
+              const role = item.role;
+              for (const c of item.content) {
+                const text = c.transcript || c.text || "";
+                if (text) {
+                  const last = this.transcript[this.transcript.length - 1];
+                  if (!last || last.role !== role || last.content !== text) {
+                    this.transcript.push({ role: role, content: text });
+                  }
+                }
+              }
+            }
+          }
+          if (this.onTranscriptUpdate) this.onTranscriptUpdate(this.transcript);
+        }
+        break;
+
+      default:
+        // Log any unhandled events so we can see what the API sends
+        console.log("[Realtime] Unhandled event:", data.type, data);
+        break;
     }
   },
 
@@ -429,6 +464,38 @@ const RealtimeClient = {
   triggerResponse() {
     if (!this.dc || this.dc.readyState !== "open") return;
     this.dc.send(JSON.stringify({ type: "response.create" }));
+  },
+
+  // Enable transcription after connection is established
+  // This avoids putting transcription settings in the initial session config
+  // which caused 504 timeouts on the /v1/realtime/calls endpoint
+  enableTranscription() {
+    if (!this.dc || this.dc.readyState !== "open") return;
+    try {
+      this.dc.send(JSON.stringify({
+        type: "session.update",
+        session: {
+          input_audio_transcription: {
+            model: "whisper-1"
+          }
+        }
+      }));
+      console.log("[Realtime] Transcription enabled via session.update");
+    } catch (e) {
+      console.warn("[Realtime] Failed to enable transcription:", e.message);
+    }
+  },
+
+  // Request full conversation history before disconnecting
+  // This is a fallback to ensure we have the transcript for coaching
+  requestConversationHistory() {
+    if (!this.dc || this.dc.readyState !== "open") return;
+    try {
+      this.dc.send(JSON.stringify({ type: "conversation.retrieve" }));
+      console.log("[Realtime] Requested conversation history");
+    } catch (e) {
+      console.warn("[Realtime] Failed to request history:", e.message);
+    }
   },
 
   // === Cleanup ===

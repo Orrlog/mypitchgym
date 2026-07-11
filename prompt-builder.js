@@ -1,6 +1,5 @@
 // MyPitchGym - Realtime Prompt Builder
-// Builds the system instructions for the AI based on mode, persona, product, etc.
-// Used by both demo.js and app.js to configure the Realtime API session.
+// Builds instructions and full session config for the OpenAI Realtime GA API.
 
 const PromptBuilder = {
   personas: {
@@ -87,5 +86,35 @@ const PromptBuilder = {
     }
 
     return instructions;
+  },
+
+  // Build the full Realtime GA session config object
+  buildSessionConfig(config) {
+    const instructions = this.buildInstructions(config);
+    const mode = config.mode || "roleplay";
+    const voiceOverride = config.voice;
+
+    // Voice mapping: reversal = deep male, roleplay/demo = expressive
+    const voice = voiceOverride || (mode === "reversal" ? "verse" : "marin");
+
+    return {
+      type: "realtime",
+      model: "gpt-realtime-2.1",
+      output_modalities: ["audio"],
+      instructions: instructions,
+      audio: {
+        input: {
+          turn_detection: {
+            type: "semantic_vad",
+            eagerness: "auto",
+            create_response: true,
+            interrupt_response: true
+          }
+        },
+        output: {
+          voice: voice
+        }
+      }
+    };
   }
 };

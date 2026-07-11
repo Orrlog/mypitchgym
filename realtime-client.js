@@ -1,7 +1,7 @@
 // MyPitchGym - Realtime WebRTC Client (GA API)
-// Connects browser directly to OpenAI Realtime API using an ephemeral client_secret.
-// Flow: server creates session -> browser gets client_secret -> browser establishes
-// WebRTC connection directly with OpenAI using that secret.
+// Persistent WebRTC connection to OpenAI Realtime API.
+// One connection per roleplay session. Audio streams both directions.
+// Server-side VAD handles turn detection and interruption.
 
 const RealtimeClient = {
   pc: null,
@@ -14,6 +14,14 @@ const RealtimeClient = {
   callActive: false,
   transcript: [],
 
+  // Timing
+  timing: {
+    userTurnEnd: null,
+    firstAudioTime: null,
+    interruptionStart: null,
+    interruptionEnd: null
+  },
+
   // Callbacks - set by caller
   onAIStartSpeaking: null,
   onAIStopSpeaking: null,
@@ -22,41 +30,37 @@ const RealtimeClient = {
   onTranscriptUpdate: null,
   onError: null,
   onConnected: null,
+  onStatusChange: null,
+
+  // Track state to avoid duplicate events
+  _aiSpeaking: false,
+  _userSpeaking: false,
+  _currentResponseText: "",
 
   async connect(config) {
     this.transcript = [];
     this.localStream = config.localStream;
     this.callActive = true;
+    this._aiSpeaking = false;
+    this._userSpeaking = false;
+    this._currentResponseText = "";
+
+    // Check browser support
+    if (!window.RTCPeerConnection) {
+      if (this.onError) this.onError("Your browser does not support WebRTC. Please use Chrome, Edge, or Firefox.");
+      return;
+    }
 
     try {
-      // Step 1: Get ephemeral session from our server
-      const sessionResponse = await fetch('/api/realtime-session', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          instructions: config.instructions,
-          voice: config.voice || 'shimmer'
-        })
-      });
+      this._setStatus("Connecting");
 
-      if (!sessionResponse.ok) {
-        const err = await sessionResponse.json();
-        throw new Error(err.error || 'Session creation failed');
-      }
-
-      const sessionData = await sessionResponse.json();
-      const clientSecret = sessionData.client_secret;
-
-      if (!clientSecret) {
-        throw new Error('No client_secret returned from session');
-      }
-
-      // Step 2: Create WebRTC peer connection
+      // Create WebRTC peer connection
       this.pc = new RTCPeerConnection();
 
       // Set up audio element for AI audio output
-      this.audioEl = document.createElement('audio');
+      this.audioEl = document.createElement("audio");
       this.audioEl.autoplay = true;
+      this.audioEl.playsInline = true;
       document.body.appendChild(this.audioEl);
 
       // Handle incoming audio track from OpenAI
@@ -71,119 +75,237 @@ const RealtimeClient = {
         this.pc.addTrack(audioTracks[0], this.localStream);
       }
 
-      // Set up data channel for events
-      this.dc = this.pc.createDataChannel('oai-events');
+      // Create data channel for events
+      this.dc = this.pc.createDataChannel("oai-events");
       this.setupDataChannel();
 
-      // Step 3: Create SDP offer
+      // Peer connection state monitoring
+      this.pc.onconnectionstatechange = () => {
+        const state = this.pc ? this.pc.connectionState : "closed";
+        console.log("[Realtime] Peer connection state:", state);
+
+        switch (state) {
+          case "connecting":
+            this._setStatus("Connecting");
+            break;
+          case "connected":
+            this._setStatus("Connected");
+            break;
+          case "disconnected":
+            if (this.callActive) {
+              this._setStatus("Connection lost");
+              if (this.onError) this.onError("Connection lost. Try ending and restarting the call.");
+            }
+            break;
+          case "failed":
+            this._setStatus("Connection failed");
+            if (this.onError) this.onError("WebRTC connection failed.");
+            break;
+          case "closed":
+            this._setStatus("Session ended");
+            break;
+        }
+      };
+
+      // Create SDP offer
       const offer = await this.pc.createOffer();
       await this.pc.setLocalDescription(offer);
 
       // Wait for ICE gathering
       await this.waitForIceGathering();
 
-      // Step 4: Send offer to OpenAI using the client_secret
-      // The GA API uses the ephemeral token as the Bearer token
-      const sdpResponse = await fetch(
-        'https://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview',
-        {
-          method: 'POST',
-          headers: {
-            'Authorization': 'Bearer ' + clientSecret,
-            'Content-Type': 'application/sdp'
-          },
-          body: this.pc.localDescription.sdp
-        }
-      );
+      // Send SDP offer to our server, which proxies to OpenAI /v1/realtime/calls
+      this._setStatus("Connecting to AI");
 
-      if (!sdpResponse.ok) {
-        const errText = await sdpResponse.text();
-        throw new Error('Realtime connection failed (' + sdpResponse.status + '): ' + errText.substring(0, 300));
+      const response = await fetch("/api/realtime-session", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sdp: this.pc.localDescription.sdp,
+          session: config.sessionConfig
+        })
+      });
+
+      if (!response.ok) {
+        const err = await response.json();
+        throw new Error(err.error || "Server connection failed");
       }
 
-      const answerSdp = await sdpResponse.text();
-      await this.pc.setRemoteDescription({ type: 'answer', sdp: answerSdp });
+      const { sdp: answerSdp } = await response.json();
 
-      // Connection established
-      if (this.onConnected) this.onConnected();
+      if (!answerSdp || !answerSdp.trim()) {
+        throw new Error("Server returned empty SDP answer");
+      }
+
+      await this.pc.setRemoteDescription({ type: "answer", sdp: answerSdp });
+
+      // Connection is being established
+      // onConnected will fire when data channel opens
 
     } catch (err) {
+      console.error("[Realtime] Connect error:", err.message);
       if (this.onError) this.onError(err.message);
       this.disconnect();
     }
   },
 
   setupDataChannel() {
-    this.dc.onopen = () => {};
+    this.dc.onopen = () => {
+      console.log("[Realtime] Data channel opened");
+      if (this.onConnected) this.onConnected();
+    };
 
     this.dc.onmessage = (event) => {
       try {
         const data = JSON.parse(event.data);
         this.handleEvent(data);
-      } catch (e) {}
+      } catch (e) {
+        // Malformed message - do not crash
+        console.warn("[Realtime] Malformed data channel message:", e.message);
+      }
     };
 
     this.dc.onerror = (err) => {
-      if (this.onError) this.onError('Data channel error');
+      console.error("[Realtime] Data channel error:", err);
+      if (this.onError) this.onError("Data channel error");
     };
 
     this.dc.onclose = () => {
-      if (this.callActive && this.onError) this.onError('Connection closed');
+      console.log("[Realtime] Data channel closed");
+      if (this.callActive) {
+        if (this.onError) this.onError("Connection closed unexpectedly");
+      }
     };
   },
 
   handleEvent(data) {
+    if (!data || !data.type) return;
+
+    // Dev logging
+    console.log("[Realtime] Event:", data.type);
+
     switch (data.type) {
-      case 'input_audio_buffer.speech_started':
-        if (this.onAIStopSpeaking) this.onAIStopSpeaking();
+      // === User speech detection (semantic VAD) ===
+      case "input_audio_buffer.speech_started":
+        // User started speaking
+        this._userSpeaking = true;
+        this.timing.interruptionStart = Date.now();
+
+        // If AI was speaking, this is an interruption
+        if (this._aiSpeaking) {
+          console.log("[Realtime] User interrupted AI");
+          this._aiSpeaking = false;
+          if (this.onAIStopSpeaking) this.onAIStopSpeaking();
+        }
+        this._setStatus("User speaking");
         break;
 
-      case 'input_audio_buffer.speech_stopped':
+      case "input_audio_buffer.speech_stopped":
+        // User stopped speaking - mark turn end for timing
+        this._userSpeaking = false;
+        this.timing.userTurnEnd = Date.now();
+        this._currentResponseText = "";
+        this._setStatus("Processing");
         break;
 
-      case 'input_audio_buffer.committed':
+      case "input_audio_buffer.committed":
+        // User audio committed for processing
         break;
 
-      case 'conversation.item.created':
-        if (data.item && data.item.type === 'message') {
+      // === Conversation items (transcripts) ===
+      case "conversation.item.created":
+        if (data.item && data.item.type === "message") {
           const role = data.item.role;
           const content = data.item.content;
-          if (content && content.length > 0 && content[0].transcript) {
-            const text = content[0].transcript;
-            if (role === 'user') {
-              this.transcript.push({ role: 'user', content: text });
-              if (this.onUserText) this.onUserText(text);
-            } else if (role === 'assistant') {
-              this.transcript.push({ role: 'assistant', content: text });
-              if (this.onAIText) this.onAIText(text);
+          if (content && content.length > 0) {
+            for (const c of content) {
+              if (c.transcript) {
+                const text = c.transcript;
+                if (role === "user") {
+                  this.transcript.push({ role: "user", content: text });
+                  if (this.onUserText) this.onUserText(text);
+                } else if (role === "assistant") {
+                  this.transcript.push({ role: "assistant", content: text });
+                  if (this.onAIText) this.onAIText(text);
+                }
+                if (this.onTranscriptUpdate) this.onTranscriptUpdate(this.transcript);
+              }
             }
-            if (this.onTranscriptUpdate) this.onTranscriptUpdate(this.transcript);
           }
         }
         break;
 
-      case 'response.audio.delta':
-        if (this.onAIStartSpeaking) this.onAIStartSpeaking();
+      // === AI response events ===
+      case "response.created":
+        // AI response started
+        this._currentResponseText = "";
         break;
 
-      case 'response.audio_transcript.delta':
+      case "response.audio.delta":
+        // First audio chunk - mark timing
+        if (!this._aiSpeaking) {
+          this._aiSpeaking = true;
+          this.timing.firstAudioTime = Date.now();
+
+          // Measure latency: user turn end -> first AI audio
+          if (this.timing.userTurnEnd) {
+            const latency = this.timing.firstAudioTime - this.timing.userTurnEnd;
+            console.log("[Realtime] Latency (user turn end -> first AI audio): " + latency + "ms");
+
+            // Measure interruption delay
+            if (this.timing.interruptionStart) {
+              const interruptDelay = this.timing.firstAudioTime - this.timing.interruptionStart;
+              console.log("[Realtime] Interruption processing time: " + interruptDelay + "ms");
+            }
+          }
+
+          this._setStatus("AI responding");
+          if (this.onAIStartSpeaking) this.onAIStartSpeaking();
+        }
         break;
 
-      case 'response.done':
+      case "response.audio_transcript.delta":
+        // Accumulate AI speech transcript
+        if (data.delta) {
+          this._currentResponseText += data.delta;
+        }
         break;
 
-      case 'error':
-        if (this.onError) this.onError(data.error ? data.error.message : 'Realtime API error');
+      case "response.done":
+        // AI finished responding
+        this._aiSpeaking = false;
+        if (this.onAIStopSpeaking) this.onAIStopSpeaking();
+        this._setStatus("Listening");
+        break;
+
+      case "response.cancelled":
+        // AI response was cancelled (user interrupted)
+        this._aiSpeaking = false;
+        if (this.onAIStopSpeaking) this.onAIStopSpeaking();
+        this._setStatus("Listening");
+
+        // Log interruption timing
+        if (this.timing.interruptionStart) {
+          this.timing.interruptionEnd = Date.now();
+          const stopDelay = this.timing.interruptionEnd - this.timing.interruptionStart;
+          console.log("[Realtime] AI stopped " + stopDelay + "ms after user started speaking");
+        }
+        break;
+
+      case "error":
+        console.error("[Realtime] API error:", data.error);
+        if (this.onError) this.onError(data.error ? data.error.message : "Realtime API error");
         break;
     }
   },
 
+  // === Avatar lip-sync support ===
   setupAudioAnalyser(audioEl) {
     try {
       if (!this.audioContext) {
         this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
       }
-      if (this.audioContext.state === 'suspended') this.audioContext.resume();
+      if (this.audioContext.state === "suspended") this.audioContext.resume();
 
       this.source = this.audioContext.createMediaElementSource(audioEl);
       this.analyser = this.audioContext.createAnalyser();
@@ -206,15 +328,23 @@ const RealtimeClient = {
     return Math.min(1, (sum / voiceBands / 255) * 1.8);
   },
 
+  // === Helpers ===
+  _setStatus(status) {
+    console.log("[Realtime] Status:", status);
+    if (this.onStatusChange) this.onStatusChange(status);
+  },
+
   waitForIceGathering() {
     return new Promise((resolve) => {
-      if (this.pc.iceGatheringState === 'complete') {
+      if (!this.pc) { resolve(); return; }
+      if (this.pc.iceGatheringState === "complete") {
         resolve();
         return;
       }
       let attempts = 0;
       const checkState = () => {
-        if (this.pc.iceGatheringState === 'complete' || attempts >= 20) {
+        if (!this.pc) { resolve(); return; }
+        if (this.pc.iceGatheringState === "complete" || attempts >= 30) {
           resolve();
         } else {
           attempts++;
@@ -225,36 +355,45 @@ const RealtimeClient = {
     });
   },
 
+  // Send a text message to trigger AI response (used for initial prompt)
   sendTextMessage(text) {
-    if (!this.dc || this.dc.readyState !== 'open') return;
+    if (!this.dc || this.dc.readyState !== "open") return;
     this.dc.send(JSON.stringify({
-      type: 'conversation.item.create',
+      type: "conversation.item.create",
       item: {
-        type: 'message',
-        role: 'user',
-        content: [{ type: 'input_text', text: text }]
+        type: "message",
+        role: "user",
+        content: [{ type: "input_text", text: text }]
       }
     }));
-    this.dc.send(JSON.stringify({ type: 'response.create' }));
+    this.dc.send(JSON.stringify({ type: "response.create" }));
   },
 
+  // Force AI to take a turn
   triggerResponse() {
-    if (!this.dc || this.dc.readyState !== 'open') return;
-    this.dc.send(JSON.stringify({ type: 'response.create' }));
+    if (!this.dc || this.dc.readyState !== "open") return;
+    this.dc.send(JSON.stringify({ type: "response.create" }));
   },
 
+  // === Cleanup ===
   disconnect() {
     this.callActive = false;
+    this._aiSpeaking = false;
+    this._userSpeaking = false;
+
     if (this.dc) {
       try { this.dc.close(); } catch (e) {}
       this.dc = null;
     }
     if (this.pc) {
+      try { this.pc.ontrack = null; } catch (e) {}
+      try { this.pc.onconnectionstatechange = null; } catch (e) {}
       try { this.pc.close(); } catch (e) {}
       this.pc = null;
     }
     if (this.audioEl) {
       try { this.audioEl.srcObject = null; } catch (e) {}
+      try { this.audioEl.pause(); } catch (e) {}
       try { this.audioEl.remove(); } catch (e) {}
       this.audioEl = null;
     }
@@ -270,5 +409,7 @@ const RealtimeClient = {
       try { this.audioContext.close(); } catch (e) {}
       this.audioContext = null;
     }
+
+    this._setStatus("Session ended");
   }
 };

@@ -1,6 +1,7 @@
 // MyPitchGym - App Logic
-// Uses OpenAI Realtime API (WebRTC) for real-time voice conversation.
-// Sub-2-second latency, natural interruptions, streaming audio.
+// Uses OpenAI Realtime GA API via persistent WebRTC connection.
+// One connection per session, continuous audio streaming, server-side VAD.
+// Post-session coaching/scoring uses the transcript captured from Realtime events.
 
 const App = {
   state: {
@@ -11,7 +12,6 @@ const App = {
     isSubscribed: false,
     callMode: "roleplay",
     callActive: false,
-    isProcessing: false,
     localStream: null,
     coachingData: null
   },
@@ -130,8 +130,8 @@ const App = {
     this.state.callMode = mode;
     this.state.transcript = [];
     this.state.callActive = false;
-    this.state.isProcessing = false;
 
+    // Collect form data on first roleplay
     if (mode === "roleplay" && this.state.step === 1) {
       const product = await this.collectFormData();
       if (!product) return;
@@ -143,6 +143,7 @@ const App = {
       }
     }
 
+    // Set avatar color scheme based on mode
     const banner = document.getElementById("roleReverseBanner");
     if (mode === "reversal") {
       banner.classList.remove("hidden");
@@ -156,20 +157,34 @@ const App = {
     this.goToStep(2);
     document.getElementById("callChat").innerHTML = "";
     this.addChatMessage("system", mode === "reversal" ? "AI is preparing to pitch to you..." : "Connecting your call...");
+
+    // Disable start button, enable end button
+    document.getElementById("btnStartCall").disabled = true;
+    document.getElementById("btnEndCall").disabled = false;
+
     this.updateCallStatus("Requesting microphone...");
 
+    // Request microphone with echo cancellation
     try {
-      this.state.localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      this.state.localStream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true
+        }
+      });
     } catch (err) {
       this.addChatMessage("system", "Microphone access denied. Allow mic access and try again.");
       this.updateCallStatus("Mic blocked");
+      document.getElementById("btnStartCall").disabled = false;
+      document.getElementById("btnEndCall").disabled = true;
       return;
     }
 
     this.updateCallStatus("Connecting to AI...");
 
-    // Build instructions client-side
-    const instructions = PromptBuilder.buildInstructions({
+    // Build session config with existing roleplay variables
+    const sessionConfig = PromptBuilder.buildSessionConfig({
       product: this.state.product,
       script: this.state.script,
       customer_type: this.state.product.customer_type,
@@ -224,13 +239,26 @@ const App = {
         }
       }, 800);
     };
+    RealtimeClient.onStatusChange = (status) => {
+      const labels = {
+        "Connecting": "Connecting to AI...",
+        "Connected": "Connected",
+        "User speaking": "",
+        "AI responding": "",
+        "Listening": "Your turn - just talk",
+        "Processing": "Processing...",
+        "Connection lost": "Connection lost",
+        "Session ended": "Call ended"
+      };
+      if (labels[status] !== undefined) {
+        this.updateCallStatus(labels[status]);
+      }
+    };
 
-    // Connect via WebRTC
-    const voice = mode === "reversal" ? "onyx" : "shimmer";
+    // Connect via persistent WebRTC
     await RealtimeClient.connect({
       localStream: this.state.localStream,
-      instructions: instructions,
-      voice: voice
+      sessionConfig: sessionConfig
     });
   },
 
@@ -245,8 +273,8 @@ const App = {
 
   endCall() {
     this.state.callActive = false;
-    this.state.isProcessing = false;
 
+    // Full cleanup
     RealtimeClient.disconnect();
 
     if (this.state.localStream) {
@@ -258,18 +286,23 @@ const App = {
     if (typeof Avatar !== "undefined") Avatar.disconnectAudio();
     this.updateCallStatus("Call ended");
 
+    // Re-enable buttons
+    document.getElementById("btnStartCall").disabled = false;
+    document.getElementById("btnEndCall").disabled = true;
+
     if (this.state.transcript.length < 2) {
       this.addChatMessage("system", "Call ended. Not enough conversation.");
       setTimeout(() => this.goToStep(1), 1500);
       return;
     }
 
-    // Role reversal calls: show transcript review
+    // Role reversal: show transcript review
     if (this.state.callMode === "reversal") {
       this.showReversalTranscript();
       return;
     }
 
+    // Roleplay: get coaching using transcript from Realtime events
     this.updateCallStatus("Analyzing your call...");
     this.getCoaching();
   },
@@ -318,7 +351,6 @@ const App = {
       listEl.appendChild(wrapper);
     }
 
-    // Update action buttons for reversal mode
     const actions = document.querySelector("#step3 .script-actions");
     if (actions) {
       actions.innerHTML = '<button id="btnPracticeAgain" class="btn-primary">Practice Myself</button>' +

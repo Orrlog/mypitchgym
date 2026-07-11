@@ -1,62 +1,86 @@
-// Create ephemeral session for OpenAI Realtime API (GA)
-// Raw fetch - no SDK, no beta headers that cause 404s.
+// MyPitchGym - Realtime GA API WebRTC Connection Endpoint
+// Receives browser SDP offer, builds multipart FormData with session config,
+// sends to OpenAI /v1/realtime/calls, returns SDP answer to browser.
+// API key stays server-side. Browser never sees it.
 
 module.exports = async (req, res) => {
-  if (req.method !== 'POST') {
-    return res.status(405).json({ error: 'Method not allowed' });
+  if (req.method !== "POST") {
+    return res.status(405).json({ error: "Method not allowed" });
   }
 
   try {
-    const { instructions, voice } = req.body;
+    const { sdp, session: sessionConfig } = req.body;
 
-    // Raw fetch to the GA Realtime sessions endpoint
-    // No SDK, no OpenAI-Beta header
-    const sessionResponse = await fetch('https://api.openai.com/v1/realtime/sessions', {
-      method: 'POST',
-      headers: {
-        'Authorization': 'Bearer ' + process.env.OPENAI_API_KEY,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        model: 'gpt-4o-realtime-preview',
-        voice: voice || 'shimmer',
-        instructions: instructions || '',
-        turn_detection: {
-          type: 'server_vad',
-          threshold: 0.5,
-          prefix_padding_ms: 300,
-          silence_duration_ms: 500
+    // Validate SDP
+    if (!sdp || !sdp.trim()) {
+      return res.status(400).json({ error: "Missing SDP offer in request body" });
+    }
+
+    // Verify API key exists
+    if (!process.env.OPENAI_API_KEY) {
+      console.error("OPENAI_API_KEY environment variable is not set");
+      return res.status(500).json({ error: "Server missing OpenAI API key configuration" });
+    }
+
+    // Build the full session configuration
+    const session = sessionConfig || {
+      type: "realtime",
+      model: "gpt-realtime-2.1",
+      output_modalities: ["audio"],
+      instructions: "",
+      audio: {
+        input: {
+          turn_detection: {
+            type: "semantic_vad",
+            eagerness: "auto",
+            create_response: true,
+            interrupt_response: true
+          }
         },
-        input_audio_transcription: {
-          model: 'whisper-1'
+        output: {
+          voice: "marin"
         }
-      })
+      }
+    };
+
+    // Build multipart FormData for OpenAI
+    const formData = new FormData();
+    formData.append("sdp", sdp);
+    formData.append("session", JSON.stringify(session));
+
+    // POST to OpenAI Realtime GA API
+    const openaiResponse = await fetch("https://api.openai.com/v1/realtime/calls", {
+      method: "POST",
+      headers: {
+        "Authorization": "Bearer " + process.env.OPENAI_API_KEY
+      },
+      body: formData
     });
 
-    if (!sessionResponse.ok) {
-      const errText = await sessionResponse.text();
-      console.error('Realtime session error:', sessionResponse.status, errText);
+    if (!openaiResponse.ok) {
+      const errText = await openaiResponse.text();
+      console.error("OpenAI Realtime error:", openaiResponse.status, errText);
 
-      // If sessions endpoint fails, try the direct model URL as fallback
-      if (sessionResponse.status === 404) {
-        return res.status(500).json({
-          error: 'Sessions endpoint not available. Your OpenAI key may not have Realtime API access, or the model name needs updating. Got: ' + errText.substring(0, 200)
-        });
-      }
-
-      return res.status(sessionResponse.status).json({
-        error: 'Session creation failed (' + sessionResponse.status + '): ' + errText.substring(0, 500)
+      return res.status(openaiResponse.status).json({
+        error: "OpenAI Realtime connection failed (" + openaiResponse.status + "): " + errText.substring(0, 500),
+        details: {
+          status: openaiResponse.status,
+          endpoint: "POST https://api.openai.com/v1/realtime/calls",
+          model: session.model,
+          errorBody: errText.substring(0, 1000)
+        }
       });
     }
 
-    const session = await sessionResponse.json();
-    return res.status(200).json({
-      client_secret: session.client_secret,
-      session_id: session.id
-    });
+    // Return the raw SDP answer to the browser
+    const answerSdp = await openaiResponse.text();
+    return res.status(200).json({ sdp: answerSdp });
 
   } catch (error) {
-    console.error('Realtime session error:', error.message);
-    return res.status(500).json({ error: 'Failed: ' + error.message });
+    console.error("Realtime session endpoint error:", error.message);
+    return res.status(500).json({
+      error: "Server error: " + error.message,
+      details: { stage: "endpoint exception", message: error.message }
+    });
   }
 };

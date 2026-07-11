@@ -1,6 +1,6 @@
 // MyPitchGym - Landing Page Demo Call
-// Uses OpenAI Realtime API (WebRTC) for sub-2-second voice latency.
-// The AI responds almost instantly - like a real conversation.
+// Uses OpenAI Realtime GA API via persistent WebRTC connection.
+// One connection, continuous audio streaming, server-side VAD.
 
 const Demo = {
   state: {
@@ -8,9 +8,7 @@ const Demo = {
     transcript: [],
     timeRemaining: 120,
     timerInterval: null,
-    localStream: null,
-    isProcessing: false,
-    aiSpeaking: false
+    localStream: null
   },
 
   // A product most people understand: home security systems
@@ -56,11 +54,12 @@ const Demo = {
 
   openModal() { document.getElementById("demoModal").classList.add("visible"); },
   closeModal() {
-    if (this.state.callActive) this.endCall(false);
+    if (this.state.callActive) this.endCall();
     document.getElementById("demoModal").classList.remove("visible");
   },
+
   toggleCall() {
-    if (this.state.callActive) { this.endCall(false); return; }
+    if (this.state.callActive) { this.endCall(); return; }
     this.startCall();
   },
 
@@ -70,15 +69,16 @@ const Demo = {
   },
 
   async startCall() {
+    // Disable start button during active session
+    const startBtn = document.getElementById("demoStartBtn");
+    startBtn.disabled = true;
+    startBtn.textContent = "Connecting...";
+
     this.state.transcript = [];
     this.state.callActive = true;
-    this.state.isProcessing = false;
 
     document.getElementById("demoChat").innerHTML = "";
     document.getElementById("demoChat").style.display = "";
-    document.getElementById("demoStartBtn").textContent = "End Call";
-    document.getElementById("demoStartBtn").classList.add("listening");
-    document.getElementById("demoStartBtn").style.display = "";
     document.querySelector(".demo-timer-bar").style.display = "";
     document.getElementById("demoTimerText").style.display = "";
     document.querySelector(".demo-header").style.display = "";
@@ -89,36 +89,48 @@ const Demo = {
     this.setAvatarMode("idle", "Connecting");
     this.startTimer();
 
+    // Request microphone with echo cancellation for clean audio
     try {
-      this.state.localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      this.state.localStream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true
+        }
+      });
     } catch (err) {
       this.addChatMessage("system", "Microphone access denied. Allow mic access in Chrome and try again.");
       this.setStatus("Mic blocked");
-      this.endCall(false);
+      startBtn.disabled = false;
+      startBtn.textContent = "Start Call";
+      this.state.callActive = false;
+      this.stopTimer();
       return;
     }
 
     this.setStatus("Connecting to AI...");
 
-    // Build instructions for the AI
-    const instructions = PromptBuilder.buildInstructions({
+    // Build session config using existing roleplay variables
+    const sessionConfig = PromptBuilder.buildSessionConfig({
       product: this.demoProduct,
       script: null,
       customer_type: "skeptic",
       sales_channel: "phone",
       difficulty: "beginner",
-      mode: "roleplay"
+      mode: "roleplay",
+      voice: "marin"
     });
 
     // Set up Realtime client callbacks
     RealtimeClient.onAIStartSpeaking = () => {
-      this.state.aiSpeaking = true;
       this.setStatus("");
       this.setAvatarMode("speaking", "Speaking");
       this.connectAvatarToAudio();
     };
     RealtimeClient.onAIStopSpeaking = () => {
-      this.state.aiSpeaking = false;
+      if (this.state.callActive) {
+        this.setAvatarMode("listening", "Listening");
+      }
     };
     RealtimeClient.onUserText = (text) => {
       if (text && text.trim()) {
@@ -140,6 +152,10 @@ const Demo = {
     RealtimeClient.onConnected = () => {
       this.setStatus("");
       this.setAvatarMode("listening", "Listening");
+      startBtn.disabled = false;
+      startBtn.textContent = "End Call";
+      startBtn.classList.add("listening");
+
       // Trigger the prospect to answer the phone
       setTimeout(() => {
         if (this.state.callActive) {
@@ -147,12 +163,27 @@ const Demo = {
         }
       }, 500);
     };
+    RealtimeClient.onStatusChange = (status) => {
+      // Map internal statuses to user-facing labels
+      const labels = {
+        "Connecting": "Connecting to AI...",
+        "Connected": "Connected",
+        "User speaking": "",
+        "AI responding": "",
+        "Listening": "Your turn - just talk",
+        "Processing": "Processing...",
+        "Connection lost": "Connection lost",
+        "Session ended": "Call ended"
+      };
+      if (labels[status] !== undefined) {
+        this.setStatus(labels[status]);
+      }
+    };
 
-    // Connect via WebRTC
+    // Connect via persistent WebRTC
     await RealtimeClient.connect({
       localStream: this.state.localStream,
-      instructions: instructions,
-      voice: "echo"
+      sessionConfig: sessionConfig
     });
   },
 
@@ -172,7 +203,7 @@ const Demo = {
       if (!this.state.callActive) { this.stopTimer(); return; }
       this.state.timeRemaining--;
       this.updateTimerDisplay();
-      if (this.state.timeRemaining <= 0) this.endCall(true);
+      if (this.state.timeRemaining <= 0) this.endCall();
     }, 1000);
   },
 
@@ -193,11 +224,11 @@ const Demo = {
     }
   },
 
-  endCall(timedOut) {
+  endCall() {
     this.state.callActive = false;
-    this.state.isProcessing = false;
     this.stopTimer();
 
+    // Full cleanup: close WebRTC, stop mic, remove audio element
     RealtimeClient.disconnect();
 
     if (this.state.localStream) {
@@ -207,7 +238,13 @@ const Demo = {
 
     this.setAvatarMode("idle", "");
     if (typeof Avatar !== "undefined") Avatar.disconnectAudio();
-    document.getElementById("demoStartBtn").style.display = "none";
+
+    const startBtn = document.getElementById("demoStartBtn");
+    startBtn.disabled = false;
+    startBtn.textContent = "Start Call";
+    startBtn.classList.remove("listening");
+    startBtn.style.display = "none";
+
     document.getElementById("demoChat").style.display = "none";
     document.querySelector(".demo-timer-bar").style.display = "none";
     document.getElementById("demoTimerText").style.display = "none";

@@ -8,7 +8,7 @@ const ProspectConfig = {
     id: "male-default",
     displayName: "Prospect",
     voice: "cedar",
-    avatarUrl: "/assets/prospects/male-default.svg",
+    avatarUrl: "/assets/prospects/male-default.png",
     altText: "Male sales prospect"
   },
 
@@ -17,7 +17,7 @@ const ProspectConfig = {
     id: "reversal-salesperson",
     displayName: "AI Salesperson",
     voice: "verse",
-    avatarUrl: "/assets/prospects/male-default.svg",
+    avatarUrl: "/assets/prospects/male-default.png",
     altText: "AI salesperson"
   },
 

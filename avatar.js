@@ -74,9 +74,9 @@ const Avatar = {
 
     // Update avatar image for reversal mode
     if (scheme === "reversal") {
-      this.updateAvatarImage("/assets/prospects/male-default.svg", "AI salesperson");
+      this.updateAvatarImage("/assets/prospects/male-default.png", "AI salesperson");
     } else {
-      this.updateAvatarImage("/assets/prospects/male-default.svg", "Male sales prospect");
+      this.updateAvatarImage("/assets/prospects/male-default.png", "Male sales prospect");
     }
   },
 

@@ -56,7 +56,7 @@
     @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.3; } }
     .call-chat { background: #1e293b; border-radius: 12px; padding: 16px; max-height: 300px; overflow-y: auto; margin-bottom: 16px; display: flex; flex-direction: column; gap: 12px; }
     .app-avatar-wrap { display: flex; flex-direction: column; align-items: center; gap: 4px; margin-bottom: 12px; }
-    .app-avatar-wrap canvas { border-radius: 50%; }
+    .app-avatar-wrap .avatar-img { border-radius: 50%; }
     .app-avatar-label { font-size: 0.75rem; color: #64748b; text-transform: uppercase; letter-spacing: 1px; }
     .call-bubble { max-width: 85%; padding: 12px 16px; border-radius: 12px; font-size: 0.9rem; line-height: 1.5; }
     .call-bubble.ai { align-self: flex-start; background: #334155; color: #e2e8f0; border-bottom-left-radius: 4px; }
@@ -219,10 +219,11 @@
           <h3>Watch how a pro handles this prospect</h3>
           <p>The AI is now selling to YOU. Listen and learn how it handles objections.</p>
         </div>
-        <div class="app-avatar-wrap">
-          <canvas id="appAvatar" width="140" height="140"></canvas>
-          <div class="app-avatar-label" id="appAvatarLabel">Idle</div>
-        </div>
+        <div class="app-avatar-wrap" id="appAvatarWrap">
+        <div class="avatar-ring" id="appAvatarRing"></div>
+        <img src="/assets/prospects/male-default.svg" alt="Male sales prospect" class="avatar-img" id="appAvatarImg" width="140" height="140">
+        <div class="app-avatar-label" id="appAvatarLabel">Idle</div>
+      </div>
         <div class="call-chat" id="callChat">
           <div class="call-bubble system">Connecting your call...</div>
         </div>
@@ -258,6 +259,7 @@
   </div>
 
   <script src="avatar.js"></script>
+<script src="prospect-config.js"></script>
   <script src="prompt-builder.js"></script>
   <script src="realtime-client.js"></script>
   <script src="app.js"></script>

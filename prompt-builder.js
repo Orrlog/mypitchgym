@@ -1,5 +1,6 @@
 // MyPitchGym - Realtime Prompt Builder
 // Builds instructions and full session config for the OpenAI Realtime GA API.
+// Voice and avatar settings come from ProspectConfig (centralized).
 
 const PromptBuilder = {
   personas: {
@@ -85,6 +86,11 @@ const PromptBuilder = {
         "- Let the salesperson speak first after you answer the phone.";
     }
 
+    // Append voice-style guide from centralized config
+    if (typeof ProspectConfig !== "undefined" && ProspectConfig.voiceStyleGuide) {
+      instructions += "\n\nVOICE STYLE:\n" + ProspectConfig.voiceStyleGuide;
+    }
+
     return instructions;
   },
 
@@ -92,10 +98,14 @@ const PromptBuilder = {
   buildSessionConfig(config) {
     const instructions = this.buildInstructions(config);
     const mode = config.mode || "roleplay";
-    const voiceOverride = config.voice;
 
-    // Voice mapping: reversal = deep male, roleplay/demo = expressive
-    const voice = voiceOverride || (mode === "reversal" ? "verse" : "marin");
+    // Get voice from centralized config
+    const presentation = (typeof ProspectConfig !== "undefined")
+      ? ProspectConfig.getPresentation(mode)
+      : { voice: "cedar" };
+
+    // Allow explicit override but default to centralized config
+    const voice = config.voice || presentation.voice;
 
     return {
       type: "realtime",

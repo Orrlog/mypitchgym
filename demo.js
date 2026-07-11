@@ -33,14 +33,10 @@ const Demo = {
       const w = document.getElementById("demoWidget");
       if (w) w.classList.add("visible");
     }, 3000);
+    // Initialize avatar controller for demo context
     if (typeof Avatar !== "undefined") {
-      Avatar.init("demoAvatar");
-    }
-    if (typeof Avatar !== "undefined") {
-      this.widgetAvatar = Object.create(Avatar);
-      this.widgetAvatar.init("demoWidgetAvatar");
-      this.widgetAvatar.setMode("idle");
-      this.widgetAvatar.setColorScheme("default");
+      Avatar.init("demo");
+      Avatar.setMode("idle");
     }
   },
 
@@ -118,7 +114,7 @@ const Demo = {
       sales_channel: "phone",
       difficulty: "beginner",
       mode: "roleplay",
-      voice: "marin"
+      voice: "cedar"
     });
 
     // Set up Realtime client callbacks

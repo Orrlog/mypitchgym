@@ -21,8 +21,10 @@ const App = {
     this.setupCallHandlers();
     this.setupScriptHandlers();
     this.loadSubscriptionStatus();
+    // Initialize avatar controller for app context
     if (typeof Avatar !== "undefined") {
-      Avatar.init("appAvatar");
+      Avatar.init("app");
+      Avatar.setMode("idle");
     }
   },
 

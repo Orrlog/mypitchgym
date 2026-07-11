@@ -250,7 +250,8 @@
   <!-- Demo Call Widget -->
   <div id="demoWidget" class="demo-widget">
     <div class="demo-widget-avatar">
-      <canvas id="demoWidgetAvatar" width="80" height="80"></canvas>
+      <img src="/assets/prospects/male-default.svg" alt="Male sales prospect" class="demo-widget-avatar-img" width="80" height="80">
+      <div class="demo-widget-avatar-ring"></div>
     </div>
     <button id="demoBtn" class="demo-btn" aria-label="Try a free demo call">
       <span class="demo-icon">&#127908;</span>
@@ -269,8 +270,9 @@
         <span class="demo-badge">Quick Sample Call</span>
         <h3>Sell me a home security system. You've got 2 minutes.</h3>
       </div>
-      <div class="demo-avatar-wrap">
-        <canvas id="demoAvatar" width="140" height="140"></canvas>
+      <div class="demo-avatar-wrap" id="demoAvatarWrap">
+        <div class="avatar-ring" id="demoAvatarRing"></div>
+        <img src="/assets/prospects/male-default.svg" alt="Male sales prospect" class="avatar-img" id="demoAvatarImg" width="140" height="140">
         <div class="demo-avatar-label" id="demoAvatarLabel">Idle</div>
       </div>
       <div class="demo-timer-bar">
@@ -299,6 +301,7 @@
     </div>
   </div>
   <script src="avatar.js"></script>
+<script src="prospect-config.js"></script>
   <script src="prompt-builder.js"></script>
   <script src="realtime-client.js"></script>
   <script src="demo.js"></script>

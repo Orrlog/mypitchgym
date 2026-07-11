@@ -283,7 +283,8 @@ const App = {
       RealtimeClient.requestConversationHistory();
     }
 
-    // Small delay to let final transcript events arrive
+    // Delay to let final transcript events arrive from the data channel.
+    // conversation.item.list response takes a moment to arrive.
     setTimeout(() => {
       RealtimeClient.disconnect();
 
@@ -303,8 +304,10 @@ const App = {
       console.log("[App] Transcript:", JSON.stringify(this.state.transcript));
 
       if (this.state.transcript.length < 1) {
-        this.addChatMessage("system", "Call ended. Not enough conversation captured for coaching.");
-        setTimeout(() => this.goToStep(1), 1500);
+        // No transcript captured. Show a clear message and stay on the call screen
+        // so the user can see something went wrong instead of being bounced to step 1.
+        this.addChatMessage("system", "Call ended, but no transcript was captured. This can happen if the connection dropped or the browser blocked transcription. Try another call.");
+        this.updateCallStatus("No transcript captured");
         return;
       }
 
@@ -315,7 +318,7 @@ const App = {
 
       this.updateCallStatus("Analyzing your call...");
       this.getCoaching();
-    }, 500);
+    }, 1200);
 
   },
 
@@ -382,6 +385,7 @@ const App = {
 
   async getCoaching() {
     try {
+      this.updateCallStatus("Analyzing your call...");
       const response = await fetch("/api/coach", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -391,14 +395,19 @@ const App = {
           product: this.state.product
         })
       });
-      if (!response.ok) throw new Error("Failed");
+      if (!response.ok) {
+        const errBody = await response.text();
+        console.error("[App] Coach API error:", response.status, errBody);
+        throw new Error("Coach API returned " + response.status + ": " + errBody.substring(0, 200));
+      }
       const result = await response.json();
       this.state.coachingData = result;
       this.displayCoaching(result);
       this.goToStep(3);
     } catch (err) {
-      this.addChatMessage("system", "Could not generate feedback.");
-      setTimeout(() => this.goToStep(1), 1500);
+      console.error("[App] Coaching error:", err.message);
+      this.addChatMessage("system", "Could not generate feedback: " + err.message);
+      this.updateCallStatus("Feedback failed - see message above");
     }
   },
 

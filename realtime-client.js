@@ -361,11 +361,15 @@ const RealtimeClient = {
         console.log("[Realtime] Conversation created");
         break;
 
+      case "conversation.item.list":
       case "conversation.retrieved":
-        // Response to conversation.retrieve - contains full history
-        if (data.conversation && data.conversation.items) {
-          console.log("[Realtime] Retrieved conversation with " + data.conversation.items.length + " items");
-          for (const item of data.conversation.items) {
+        // Response to conversation.item.list or conversation.retrieve - contains full history
+        // conversation.item.list returns { items: [...] }
+        // conversation.retrieved returns { conversation: { items: [...] } }
+        var items = data.items || (data.conversation && data.conversation.items) || [];
+        if (items && items.length > 0) {
+          console.log("[Realtime] Retrieved conversation with " + items.length + " items");
+          for (const item of items) {
             if (item.type === "message" && item.content) {
               const role = item.role;
               for (const c of item.content) {
@@ -466,12 +470,14 @@ const RealtimeClient = {
     this.dc.send(JSON.stringify({ type: "response.create" }));
   },
 
-  // Enable transcription after connection is established
-  // This avoids putting transcription settings in the initial session config
-  // which caused 504 timeouts on the /v1/realtime/calls endpoint
+  // Enable transcription AND text output after connection is established.
+  // We cannot put these in the initial session config because they cause 504s
+  // on the /v1/realtime/calls endpoint. Sending session.update after the data
+  // channel opens works reliably.
   enableTranscription() {
     if (!this.dc || this.dc.readyState !== "open") return;
     try {
+      // Enable user speech transcription (input side)
       this.dc.send(JSON.stringify({
         type: "session.update",
         session: {
@@ -480,21 +486,32 @@ const RealtimeClient = {
           }
         }
       }));
-      console.log("[Realtime] Transcription enabled via session.update");
+      console.log("[Realtime] Input transcription enabled via session.update");
+
+      // Also enable text output modality so we get response.text.delta/done events
+      // This gives us the AI's spoken text as a transcript
+      this.dc.send(JSON.stringify({
+        type: "session.update",
+        session: {
+          output_modalities: ["audio", "text"]
+        }
+      }));
+      console.log("[Realtime] Text output modality enabled via session.update");
     } catch (e) {
       console.warn("[Realtime] Failed to enable transcription:", e.message);
     }
   },
 
-  // Request full conversation history before disconnecting
-  // This is a fallback to ensure we have the transcript for coaching
+  // Request full conversation history before disconnecting.
+  // Uses conversation.item.list (the GA API method) as a fallback to capture
+  // any transcript items we may have missed during the live session.
   requestConversationHistory() {
     if (!this.dc || this.dc.readyState !== "open") return;
     try {
-      this.dc.send(JSON.stringify({ type: "conversation.retrieve" }));
-      console.log("[Realtime] Requested conversation history");
+      this.dc.send(JSON.stringify({ type: "conversation.item.list" }));
+      console.log("[Realtime] Requested conversation item list");
     } catch (e) {
-      console.warn("[Realtime] Failed to request history:", e.message);
+      console.warn("[Realtime] Failed to request item list:", e.message);
     }
   },
 

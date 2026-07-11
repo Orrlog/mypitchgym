@@ -477,26 +477,18 @@ const RealtimeClient = {
   enableTranscription() {
     if (!this.dc || this.dc.readyState !== "open") return;
     try {
-      // Enable user speech transcription (input side)
+      // Enable user speech transcription (input side).
+      // The GA API requires type: "realtime" in the session object for session.update.
       this.dc.send(JSON.stringify({
         type: "session.update",
         session: {
+          type: "realtime",
           input_audio_transcription: {
             model: "whisper-1"
           }
         }
       }));
       console.log("[Realtime] Input transcription enabled via session.update");
-
-      // Also enable text output modality so we get response.text.delta/done events
-      // This gives us the AI's spoken text as a transcript
-      this.dc.send(JSON.stringify({
-        type: "session.update",
-        session: {
-          output_modalities: ["audio", "text"]
-        }
-      }));
-      console.log("[Realtime] Text output modality enabled via session.update");
     } catch (e) {
       console.warn("[Realtime] Failed to enable transcription:", e.message);
     }

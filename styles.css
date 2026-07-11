@@ -24,6 +24,10 @@ body {
   display: flex; justify-content: space-between; align-items: center; height: 64px;
 }
 .logo { font-size: 1.3rem; font-weight: 700; color: #f1f5f9; letter-spacing: -0.5px; }
+.logo-link { display: flex; align-items: center; text-decoration: none; }
+.site-logo { height: 36px; width: auto; display: block; }
+.app-site-logo { height: 32px; }
+@media (max-width: 600px) { .site-logo { height: 28px; } .app-site-logo { height: 26px; } }
 .site-header nav { display: flex; gap: 24px; align-items: center; }
 .site-header nav a { color: #94a3b8; text-decoration: none; font-size: 0.9rem; transition: color 0.2s; }
 .site-header nav a:hover { color: #f1f5f9; }

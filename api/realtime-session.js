@@ -1,6 +1,5 @@
-// Create ephemeral session for OpenAI Realtime API (GA version)
-// Returns a client_secret that the browser uses to establish a WebRTC connection
-// directly with OpenAI. The API key never touches the browser.
+// Create ephemeral session for OpenAI Realtime API (GA)
+// Raw fetch - no SDK, no beta headers that cause 404s.
 
 module.exports = async (req, res) => {
   if (req.method !== 'POST') {
@@ -10,25 +9,47 @@ module.exports = async (req, res) => {
   try {
     const { instructions, voice } = req.body;
 
-    // Use the OpenAI SDK to create a realtime session (GA API)
-    const { OpenAI } = require('openai');
-    const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-
-    const session = await openai.beta.realtime.sessions.create({
-      model: 'gpt-4o-realtime-preview',
-      voice: voice || 'shimmer',
-      instructions: instructions || '',
-      turn_detection: {
-        type: 'server_vad',
-        threshold: 0.5,
-        prefix_padding_ms: 300,
-        silence_duration_ms: 500
+    // Raw fetch to the GA Realtime sessions endpoint
+    // No SDK, no OpenAI-Beta header
+    const sessionResponse = await fetch('https://api.openai.com/v1/realtime/sessions', {
+      method: 'POST',
+      headers: {
+        'Authorization': 'Bearer ' + process.env.OPENAI_API_KEY,
+        'Content-Type': 'application/json'
       },
-      input_audio_transcription: {
-        model: 'whisper-1'
-      }
+      body: JSON.stringify({
+        model: 'gpt-4o-realtime-preview',
+        voice: voice || 'shimmer',
+        instructions: instructions || '',
+        turn_detection: {
+          type: 'server_vad',
+          threshold: 0.5,
+          prefix_padding_ms: 300,
+          silence_duration_ms: 500
+        },
+        input_audio_transcription: {
+          model: 'whisper-1'
+        }
+      })
     });
 
+    if (!sessionResponse.ok) {
+      const errText = await sessionResponse.text();
+      console.error('Realtime session error:', sessionResponse.status, errText);
+
+      // If sessions endpoint fails, try the direct model URL as fallback
+      if (sessionResponse.status === 404) {
+        return res.status(500).json({
+          error: 'Sessions endpoint not available. Your OpenAI key may not have Realtime API access, or the model name needs updating. Got: ' + errText.substring(0, 200)
+        });
+      }
+
+      return res.status(sessionResponse.status).json({
+        error: 'Session creation failed (' + sessionResponse.status + '): ' + errText.substring(0, 500)
+      });
+    }
+
+    const session = await sessionResponse.json();
     return res.status(200).json({
       client_secret: session.client_secret,
       session_id: session.id
@@ -36,8 +57,6 @@ module.exports = async (req, res) => {
 
   } catch (error) {
     console.error('Realtime session error:', error.message);
-    return res.status(500).json({
-      error: 'Failed to create voice session: ' + (error.status || '') + ' ' + error.message
-    });
+    return res.status(500).json({ error: 'Failed: ' + error.message });
   }
 };

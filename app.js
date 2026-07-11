@@ -292,8 +292,8 @@ const App = {
     document.getElementById("btnStartCall").disabled = false;
     document.getElementById("btnEndCall").disabled = true;
 
-    if (this.state.transcript.length < 2) {
-      this.addChatMessage("system", "Call ended. Not enough conversation.");
+    if (this.state.transcript.length < 1) {
+      this.addChatMessage("system", "Call ended. Not enough conversation captured for coaching.");
       setTimeout(() => this.goToStep(1), 1500);
       return;
     }

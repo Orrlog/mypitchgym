@@ -219,14 +219,20 @@ const RealtimeClient = {
           const content = data.item.content;
           if (content && content.length > 0) {
             for (const c of content) {
-              if (c.transcript) {
-                const text = c.transcript;
+              const text = c.transcript || c.text || "";
+              if (text) {
                 if (role === "user") {
-                  this.transcript.push({ role: "user", content: text });
-                  if (this.onUserText) this.onUserText(text);
+                  const last = this.transcript[this.transcript.length - 1];
+                  if (!last || last.role !== "user" || last.content !== text) {
+                    this.transcript.push({ role: "user", content: text });
+                    if (this.onUserText) this.onUserText(text);
+                  }
                 } else if (role === "assistant") {
-                  this.transcript.push({ role: "assistant", content: text });
-                  if (this.onAIText) this.onAIText(text);
+                  const last = this.transcript[this.transcript.length - 1];
+                  if (!last || last.role !== "assistant" || last.content !== text) {
+                    this.transcript.push({ role: "assistant", content: text });
+                    if (this.onAIText) this.onAIText(text);
+                  }
                 }
                 if (this.onTranscriptUpdate) this.onTranscriptUpdate(this.transcript);
               }
@@ -272,15 +278,33 @@ const RealtimeClient = {
         break;
 
       case "response.done":
-        // AI finished responding
+        // AI finished responding - save accumulated transcript text
         this._aiSpeaking = false;
+        if (this._currentResponseText && this._currentResponseText.trim()) {
+          const last = this.transcript[this.transcript.length - 1];
+          if (!last || last.role !== "assistant" || last.content !== this._currentResponseText.trim()) {
+            this.transcript.push({ role: "assistant", content: this._currentResponseText.trim() });
+            if (this.onAIText) this.onAIText(this._currentResponseText.trim());
+            if (this.onTranscriptUpdate) this.onTranscriptUpdate(this.transcript);
+          }
+          this._currentResponseText = "";
+        }
         if (this.onAIStopSpeaking) this.onAIStopSpeaking();
         this._setStatus("Listening");
         break;
 
       case "response.cancelled":
-        // AI response was cancelled (user interrupted)
+        // AI response was cancelled (user interrupted) - save partial transcript
         this._aiSpeaking = false;
+        if (this._currentResponseText && this._currentResponseText.trim()) {
+          const last = this.transcript[this.transcript.length - 1];
+          if (!last || last.role !== "assistant" || last.content !== this._currentResponseText.trim()) {
+            this.transcript.push({ role: "assistant", content: this._currentResponseText.trim() });
+            if (this.onAIText) this.onAIText(this._currentResponseText.trim());
+            if (this.onTranscriptUpdate) this.onTranscriptUpdate(this.transcript);
+          }
+          this._currentResponseText = "";
+        }
         if (this.onAIStopSpeaking) this.onAIStopSpeaking();
         this._setStatus("Listening");
 

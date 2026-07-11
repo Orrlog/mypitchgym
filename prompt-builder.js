@@ -110,10 +110,14 @@ const PromptBuilder = {
     return {
       type: "realtime",
       model: "gpt-realtime-2.1",
-      output_modalities: ["audio"],
+      output_modalities: ["audio", "text"],
       instructions: instructions,
       audio: {
         input: {
+          format: "pcm16",
+          transcription: {
+            model: "whisper-1"
+          },
           turn_detection: {
             type: "semantic_vad",
             eagerness: "auto",
@@ -122,6 +126,7 @@ const PromptBuilder = {
           }
         },
         output: {
+          format: "pcm16",
           voice: voice
         }
       }

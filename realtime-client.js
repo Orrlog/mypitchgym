@@ -212,6 +212,38 @@ const RealtimeClient = {
         // User audio committed for processing
         break;
 
+      case "conversation.item.input_audio_transcription.completed":
+        // User speech transcription completed
+        if (data.transcript) {
+          const text = data.transcript;
+          const last = this.transcript[this.transcript.length - 1];
+          if (!last || last.role !== "user" || last.content !== text) {
+            this.transcript.push({ role: "user", content: text });
+            if (this.onUserText) this.onUserText(text);
+            if (this.onTranscriptUpdate) this.onTranscriptUpdate(this.transcript);
+          }
+        }
+        break;
+
+      // Catch text output events (when text modality is enabled)
+      case "response.text.delta":
+        if (data.delta) {
+          this._currentResponseText += data.delta;
+        }
+        break;
+
+      case "response.text.done":
+        if (data.text) {
+          const last = this.transcript[this.transcript.length - 1];
+          if (!last || last.role !== "assistant" || last.content !== data.text) {
+            this.transcript.push({ role: "assistant", content: data.text });
+            if (this.onAIText) this.onAIText(data.text);
+            if (this.onTranscriptUpdate) this.onTranscriptUpdate(this.transcript);
+          }
+          this._currentResponseText = "";
+        }
+        break;
+
       // === Conversation items (transcripts) ===
       case "conversation.item.created":
         if (data.item && data.item.type === "message") {

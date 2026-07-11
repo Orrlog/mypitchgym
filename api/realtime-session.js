@@ -30,6 +30,9 @@ module.exports = async (req, res) => {
       instructions: "",
       audio: {
         input: {
+          transcription: {
+            model: "whisper-1"
+          },
           turn_detection: {
             type: "semantic_vad",
             eagerness: "auto",

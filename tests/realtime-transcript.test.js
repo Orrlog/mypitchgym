@@ -19,7 +19,6 @@ function resetClient() {
   RealtimeClient.callActive = false;
   RealtimeClient._aiSpeaking = false;
   RealtimeClient._userSpeaking = false;
-  RealtimeClient._transcriptionConfiguredInSession = false;
   for (const callback of callbacks) RealtimeClient[callback] = null;
 }
 

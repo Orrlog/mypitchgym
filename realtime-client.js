@@ -40,7 +40,6 @@ const RealtimeClient = {
   _activeUserItemId: null,
   _activeUserStartedBeforeEnd: false,
   _ending: false,
-  _transcriptionConfiguredInSession: false,
 
   // Transcript collector state
   _items: null,
@@ -69,12 +68,6 @@ const RealtimeClient = {
     this.callActive = true;
     this._aiSpeaking = false;
     this._userSpeaking = false;
-    this._transcriptionConfiguredInSession = !!(
-      config.sessionConfig &&
-      config.sessionConfig.audio &&
-      config.sessionConfig.audio.input &&
-      config.sessionConfig.audio.input.transcription
-    );
 
     // Check browser support
     if (!window.RTCPeerConnection) {
@@ -303,10 +296,6 @@ const RealtimeClient = {
       case "error":
         console.error("[Realtime] API error:", this._safeError(data.error));
         if (this.onError) this.onError(data.error ? data.error.message : "Realtime API error");
-        break;
-
-      case "session.updated":
-        this._diag(data, "session_updated");
         break;
 
       case "conversation.created":
@@ -1058,35 +1047,6 @@ const RealtimeClient = {
   triggerResponse() {
     if (!this.dc || this.dc.readyState !== "open") return;
     this.dc.send(JSON.stringify({ type: "response.create" }));
-  },
-
-  // Input transcription is now included in the initial session config. This
-  // remains as a safe fallback for older sessions that did not include it.
-  enableTranscription() {
-    if (!this.dc || this.dc.readyState !== "open") return;
-    if (this._transcriptionConfiguredInSession) {
-      this._diag({ type: "session.updated" }, "input_transcription_configured_in_session");
-      return;
-    }
-
-    try {
-      this.dc.send(JSON.stringify({
-        type: "session.update",
-        session: {
-          type: "realtime",
-          audio: {
-            input: {
-              transcription: {
-                model: "whisper-1"
-              }
-            }
-          }
-        }
-      }));
-      this._devLog("Input transcription enabled via session.update");
-    } catch (e) {
-      console.warn("[Realtime] Failed to enable transcription:", e.message);
-    }
   },
 
   _diag(data, state, itemOverride) {

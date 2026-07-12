@@ -115,7 +115,8 @@ const PromptBuilder = {
       audio: {
         input: {
           transcription: {
-            model: "whisper-1"
+            model: "gpt-4o-mini-transcribe",
+            language: "en"
           },
           turn_detection: {
             type: "semantic_vad",

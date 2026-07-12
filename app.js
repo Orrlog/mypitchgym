@@ -229,8 +229,6 @@ const App = {
     };
     RealtimeClient.onConnected = () => {
       this.state.callActive = true;
-      // Enable transcription after connection for coaching/scoring
-      RealtimeClient.enableTranscription();
       this.updateCallStatus("Connected - just talk naturally");
       this.setAvatarMode("listening", this.state.callMode === "reversal" ? "AI Pitches" : "Listening");
 

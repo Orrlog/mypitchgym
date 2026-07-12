@@ -42,6 +42,8 @@ Use the full preview URL in Supabase, not just the path.
 
 A carefully limited Vercel preview wildcard can sometimes be used, but exact preview URLs are preferred for this first test. Do not use a wildcard unless you know the correct Vercel account or team slug.
 
+If confirmation emails confirm the account but land on the preview sales page instead of `dashboard.html`, inspect the Supabase confirmation email template next. The confirmation button or link should use Supabase's confirmation-link variable, `{{ .ConfirmationURL }}`, not a plain Site URL. In the Supabase dashboard, check Authentication > Email Templates > Confirm signup and make sure the link in that template uses `{{ .ConfirmationURL }}`.
+
 ## Important limits in this phase
 
 This branch only adds a basic authentication foundation. The existing practice app remains available at `app.html`, and the existing localStorage paywall is not replaced.

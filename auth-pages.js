@@ -20,6 +20,73 @@ function setBusy(button, busy, busyText) {
   button.textContent = busy ? busyText : button.dataset.defaultText;
 }
 
+function isSamePasswordError(error) {
+  const code = String(error && error.code ? error.code : "").toLowerCase();
+  const message = String(error && error.message ? error.message : "").toLowerCase();
+  return code === "same_password" || message.includes("same password");
+}
+
+function createPasswordIcon(isHiddenIcon) {
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("viewBox", "0 0 24 24");
+  svg.setAttribute("width", "20");
+  svg.setAttribute("height", "20");
+  svg.setAttribute("aria-hidden", "true");
+  svg.setAttribute("focusable", "false");
+
+  const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+  path.setAttribute("fill", "none");
+  path.setAttribute("stroke", "currentColor");
+  path.setAttribute("stroke-linecap", "round");
+  path.setAttribute("stroke-linejoin", "round");
+  path.setAttribute("stroke-width", "2");
+  path.setAttribute(
+    "d",
+    isHiddenIcon
+      ? "M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Zm10 3a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z"
+      : "M3 3l18 18M10.6 10.6a2 2 0 0 0 2.8 2.8M9.9 4.2A10.8 10.8 0 0 1 12 4.0c6.5 0 10 8 10 8a17.8 17.8 0 0 1-3.1 4.5M6.6 6.6C3.6 8.7 2 12 2 12s3.5 8 10 8a10.6 10.6 0 0 0 4.1-.8"
+  );
+
+  svg.appendChild(path);
+  return svg;
+}
+
+function setupPasswordVisibilityControls(root = document) {
+  const passwordInputs = root.querySelectorAll('input[type="password"]');
+
+  passwordInputs.forEach((input) => {
+    if (input.closest(".auth-password-wrap")) return;
+
+    const wrapper = document.createElement("div");
+    wrapper.className = "auth-password-wrap";
+    input.parentNode.insertBefore(wrapper, input);
+    wrapper.appendChild(input);
+
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "auth-password-toggle";
+    button.setAttribute("aria-label", "Show password");
+    button.setAttribute("aria-pressed", "false");
+
+    const showIcon = createPasswordIcon(true);
+    const hideIcon = createPasswordIcon(false);
+    hideIcon.hidden = true;
+    button.appendChild(showIcon);
+    button.appendChild(hideIcon);
+
+    button.addEventListener("click", () => {
+      const shouldShow = input.type === "password";
+      input.type = shouldShow ? "text" : "password";
+      button.setAttribute("aria-label", shouldShow ? "Hide password" : "Show password");
+      button.setAttribute("aria-pressed", String(shouldShow));
+      showIcon.hidden = shouldShow;
+      hideIcon.hidden = !shouldShow;
+    });
+
+    wrapper.appendChild(button);
+  });
+}
+
 function validEmail(email) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 }
@@ -53,6 +120,8 @@ function showMode(mode) {
 }
 
 async function initLoginPage() {
+  setupPasswordVisibilityControls();
+
   const params = new URLSearchParams(window.location.search);
   showMode(params.get("mode") === "signup" ? "signup" : "login");
 
@@ -172,6 +241,8 @@ async function initForgotPasswordPage() {
 }
 
 async function initResetPasswordPage() {
+  setupPasswordVisibilityControls();
+
   const message = qs("[data-auth-message]");
 
   try {
@@ -206,7 +277,11 @@ async function initResetPasswordPage() {
       setMessage(message, "Your password has been updated. You can continue to your member page.", "success");
       qs("[data-after-reset]").classList.remove("hidden");
     } catch (error) {
-      setMessage(message, authMessage(error, "That reset link is invalid or has expired. Please request a new one."), "error");
+      const fallback = "That reset link is invalid or has expired. Please request a new one.";
+      const errorMessage = isSamePasswordError(error)
+        ? "Your new password must be different from your current password."
+        : authMessage(error, fallback);
+      setMessage(message, errorMessage, "error");
     } finally {
       setBusy(button, false);
     }

@@ -14,7 +14,8 @@ const App = {
     callActive: false,
     endingCall: false,
     localStream: null,
-    coachingData: null
+    coachingData: null,
+    completedSession: null
   },
 
   init() {
@@ -83,6 +84,7 @@ const App = {
   setupScriptHandlers() {
     document.getElementById("btnPracticeAgain").addEventListener("click", () => this.startCall("roleplay"));
     document.getElementById("btnNewSetup").addEventListener("click", () => {
+      this.clearCompletedSession();
       this.goToStep(1);
       this.state.script = null;
       this.state.transcript = [];
@@ -130,6 +132,7 @@ const App = {
   },
 
   async startCall(mode) {
+    this.clearCompletedSession();
     this.state.callMode = mode;
     this.state.transcript = [];
     this.state.callActive = false;
@@ -300,6 +303,10 @@ const App = {
       console.warn("[App] Transcript finalization failed:", err.message);
     }
 
+    const finalizedTranscript = this.cloneTranscript(finalization.transcript || RealtimeClient.transcript || this.state.transcript);
+    this.state.transcript = finalizedTranscript;
+    this.state.completedSession = this.createCompletedSession(finalizedTranscript);
+
     RealtimeClient.disconnect();
 
     if (this.state.localStream) {
@@ -315,18 +322,16 @@ const App = {
     if (endButton) endButton.disabled = true;
     this.state.endingCall = false;
 
-    this.state.transcript = finalization.transcript || RealtimeClient.transcript || [];
-
     if (this.isRealtimeDebugEnabled()) {
       console.log("[App] Final transcript summary:", {
-        turns: this.state.transcript.length,
+        turns: finalizedTranscript.length,
         timed_out: !!finalization.timedOut,
         pending_items: finalization.pendingItemCount || 0,
         pending_responses: finalization.pendingResponseCount || 0
       });
     }
 
-    if (this.state.transcript.length < 1) {
+    if (finalizedTranscript.length < 1) {
       const timeoutDetail = finalization.timedOut ? " The final transcript timed out before any usable turns arrived." : "";
       this.addChatMessage("system", "Call ended, but no reliable transcript was captured." + timeoutDetail + " Try another call before requesting coaching.");
       this.updateCallStatus("No reliable transcript");
@@ -338,7 +343,7 @@ const App = {
       return;
     }
 
-    if (!this.hasMeaningfulCoachingTranscript(this.state.transcript)) {
+    if (!this.hasMeaningfulCoachingTranscript(finalizedTranscript)) {
       const timeoutDetail = finalization.timedOut ? " Some final transcript events did not arrive in time." : "";
       this.addChatMessage("system", "Call ended, but there was not enough finalized back-and-forth to generate reliable coaching." + timeoutDetail + " Try another call with at least one full exchange.");
       this.updateCallStatus("Not enough transcript for coaching");
@@ -347,6 +352,39 @@ const App = {
 
     this.updateCallStatus("Analyzing your call...");
     this.getCoaching();
+  },
+
+  cloneTranscript(transcript) {
+    if (!Array.isArray(transcript)) return [];
+    return transcript
+      .filter(msg => msg && (msg.role === "user" || msg.role === "assistant") && msg.content && msg.content.trim())
+      .map(msg => ({
+        role: msg.role,
+        content: msg.content.trim()
+      }));
+  },
+
+  createCompletedSession(transcript) {
+    const product = this.state.product || {};
+    return {
+      transcript: this.cloneTranscript(transcript),
+      coaching: null,
+      mode: this.state.callMode || "",
+      buyerType: product.customer_type || "",
+      difficulty: product.difficulty || "",
+      productName: product.product_name || "",
+      completedAt: new Date().toISOString()
+    };
+  },
+
+  clearCompletedSession() {
+    this.state.completedSession = null;
+    this.state.coachingData = null;
+    const transcriptEl = document.getElementById("completedTranscript");
+    if (transcriptEl) {
+      transcriptEl.innerHTML = "";
+      transcriptEl.classList.add("hidden");
+    }
   },
 
   hasMeaningfulCoachingTranscript(transcript) {
@@ -418,6 +456,7 @@ const App = {
         '<button id="btnRoleReverseAfter" class="btn-secondary">Run It Again</button>';
       document.getElementById("btnPracticeAgain").addEventListener("click", () => this.startCall("roleplay"));
       document.getElementById("btnNewSetup").addEventListener("click", () => {
+        this.clearCompletedSession();
         this.goToStep(1);
         this.state.script = null;
         this.state.transcript = [];
@@ -431,11 +470,13 @@ const App = {
   async getCoaching() {
     try {
       this.updateCallStatus("Analyzing your call...");
+      const completedSession = this.state.completedSession;
+      const coachingTranscript = completedSession ? completedSession.transcript : this.cloneTranscript(this.state.transcript);
       const response = await fetch("/api/coach", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          transcript: this.state.transcript,
+          transcript: coachingTranscript,
           script: this.state.script,
           product: this.state.product
         })
@@ -447,6 +488,7 @@ const App = {
       }
       const result = await response.json();
       this.state.coachingData = result;
+      if (this.state.completedSession) this.state.completedSession.coaching = result;
       this.displayCoaching(result);
       this.goToStep(3);
     } catch (err) {
@@ -473,6 +515,71 @@ const App = {
     if (coaching.missed) coaching.missed.forEach((item, i) => listEl.appendChild(this.createCoachingItem("MISSED", item, "missed", i)));
     if (coaching.tips) coaching.tips.forEach((item, i) => listEl.appendChild(this.createCoachingItem("TIP", item, "tip", i)));
     if (coaching.objection_handling) listEl.appendChild(this.createCoachingItem("OBJ", "Objection Handling: " + coaching.objection_handling, "obj", 0));
+    this.renderCompletedTranscript();
+  },
+
+  renderCompletedTranscript() {
+    const container = document.getElementById("completedTranscript");
+    if (!container) return;
+
+    const completedSession = this.state.completedSession;
+    const transcript = completedSession ? completedSession.transcript : [];
+    container.innerHTML = "";
+
+    if (!Array.isArray(transcript) || transcript.length < 1) {
+      container.classList.add("hidden");
+      return;
+    }
+
+    container.classList.remove("hidden");
+
+    const header = document.createElement("div");
+    header.className = "completed-transcript-header";
+
+    const title = document.createElement("div");
+    title.className = "completed-transcript-title";
+    title.textContent = "Call Transcript";
+    header.appendChild(title);
+
+    const meta = document.createElement("div");
+    meta.className = "completed-transcript-meta";
+    const metaParts = [];
+    if (completedSession.productName) metaParts.push(completedSession.productName);
+    if (completedSession.buyerType) metaParts.push(this.formatLabel(completedSession.buyerType));
+    if (completedSession.difficulty) metaParts.push(this.formatLabel(completedSession.difficulty));
+    meta.textContent = metaParts.join(" - ");
+    header.appendChild(meta);
+
+    container.appendChild(header);
+
+    const turns = document.createElement("div");
+    turns.className = "completed-transcript-turns";
+
+    for (const msg of transcript) {
+      const turn = document.createElement("div");
+      turn.className = "completed-transcript-turn " + msg.role;
+
+      const label = document.createElement("div");
+      label.className = "completed-transcript-speaker";
+      label.textContent = msg.role === "user" ? "You" : "AI Prospect";
+
+      const content = document.createElement("div");
+      content.className = "completed-transcript-text";
+      content.textContent = msg.content;
+
+      turn.appendChild(label);
+      turn.appendChild(content);
+      turns.appendChild(turn);
+    }
+
+    container.appendChild(turns);
+  },
+
+  formatLabel(value) {
+    return String(value || "")
+      .split("_")
+      .map(part => part ? part.charAt(0).toUpperCase() + part.slice(1) : "")
+      .join(" ");
   },
 
   createCoachingItem(icon, text, type, index) {
@@ -493,6 +600,7 @@ const App = {
     const allMissed = this.state.coachingData ? this.state.coachingData.missed : [];
     const failurePoint = allMissed[missedIndex];
     if (!failurePoint) return;
+    this.clearCompletedSession();
     this.state.transcript = [];
     this.goToStep(2);
     document.getElementById("callChat").innerHTML = "";

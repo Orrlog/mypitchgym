@@ -80,6 +80,17 @@
     .coaching-item { display: flex; gap: 10px; align-items: flex-start; }
     .coaching-item .icon { font-size: 0.8rem; font-weight: 700; color: #6366f1; min-width: 50px; }
     .coaching-item .text { color: #cbd5e1; font-size: 0.9rem; line-height: 1.5; }
+    .completed-transcript { margin-top: 24px; padding-top: 20px; border-top: 1px solid #334155; }
+    .completed-transcript-header { display: flex; justify-content: space-between; gap: 12px; align-items: flex-end; margin-bottom: 14px; flex-wrap: wrap; }
+    .completed-transcript-title { color: #f1f5f9; font-weight: 700; font-size: 1rem; }
+    .completed-transcript-meta { color: #94a3b8; font-size: 0.78rem; }
+    .completed-transcript-turns { display: flex; flex-direction: column; gap: 10px; max-height: 360px; overflow-y: auto; padding-right: 4px; }
+    .completed-transcript-turn { border-radius: 8px; padding: 12px 14px; border: 1px solid #334155; background: #0f172a; }
+    .completed-transcript-turn.user { border-color: rgba(99, 102, 241, 0.5); }
+    .completed-transcript-turn.assistant { border-color: rgba(34, 197, 94, 0.35); }
+    .completed-transcript-speaker { font-size: 0.72rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: #818cf8; margin-bottom: 4px; }
+    .completed-transcript-turn.assistant .completed-transcript-speaker { color: #22c55e; }
+    .completed-transcript-text { color: #cbd5e1; font-size: 0.9rem; line-height: 1.55; white-space: pre-wrap; }
     .retry-btn { background: #6366f1; color: #fff; border: none; padding: 8px 16px; border-radius: 8px; font-size: 0.8rem; font-weight: 600; cursor: pointer; margin-top: 6px; }
     .retry-btn:hover { background: #4f46e5; }
 
@@ -236,6 +247,7 @@
         <div class="script-title">Your <span>Practice Report</span></div>
         <div class="coaching-score" id="coachingScore"></div>
         <div class="coaching-list" id="coachingList"></div>
+        <div class="completed-transcript hidden" id="completedTranscript"></div>
         <div class="script-actions" style="margin-top:20px;">
           <button id="btnPracticeAgain" class="btn-primary">Practice Again</button>
           <button id="btnNewSetup" class="btn-secondary">New Product Setup</button>

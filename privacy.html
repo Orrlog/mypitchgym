@@ -22,21 +22,22 @@
     <div class="legal-content">
       <a href="/" class="legal-back">← Back to home</a>
       <h1>Privacy Policy</h1>
-      <p class="updated">Last updated: July 2026</p>
+      <p class="updated">Last updated: July 12, 2026</p>
 
       <h2>1. Information We Collect</h2>
       <p>We collect minimal information necessary to provide the Service:</p>
       <ul>
-        <li><strong>Account data:</strong> Email address (only if you contact us). We do not require an email to sign up — authentication is handled via Stripe checkout.</li>
-        <li><strong>Practice content:</strong> Product descriptions, scripts, benefits, objections, and call transcripts you submit during practice sessions. These are processed in real-time and are not stored on our servers after your session ends.</li>
-        <li><strong>Payment data:</strong> Handled entirely by Stripe. We never see, store, or process your credit card information.</li>
+        <li><strong>Account data:</strong> Email address, account identifier, authentication and login session information, and password-reset or email-confirmation requests when you create or use an account.</li>
+        <li><strong>Practice content:</strong> Product descriptions, scripts, benefits, objections, and call transcripts you submit or generate during practice sessions. These are processed to provide live roleplay, script tools, and coaching, and completed roleplay transcripts are not currently saved to customer accounts.</li>
+        <li><strong>Technical data:</strong> Basic technical information needed to operate, troubleshoot, and secure the Service, such as browser, device, request, and security-related information.</li>
+        <li><strong>Payment data:</strong> MyPitchGym does not currently operate production subscription billing or store production payment details.</li>
         <li><strong>Usage data:</strong> Anonymous analytics data such as page views and feature usage (if analytics are enabled).</li>
       </ul>
 
       <h2>2. How We Use Your Information</h2>
       <ul>
         <li>To provide the Service (script generation, roleplay, coaching)</li>
-        <li>To process payments via Stripe</li>
+        <li>To create and manage email-and-password accounts, login sessions, email confirmations, and password resets</li>
         <li>To improve the Service and fix issues</li>
         <li>To communicate with you about your account if necessary</li>
       </ul>
@@ -44,18 +45,18 @@
       <h2>3. Third-Party Services</h2>
       <p>The Service relies on the following third parties:</p>
       <ul>
-        <li><strong>OpenAI:</strong> Processes your practice content (product info, scripts, transcripts) to generate AI responses. OpenAI's API processes this data in real-time and does not retain it beyond 30 days. See <a href="https://openai.com/privacy" style="color:#6366f1;">OpenAI's Privacy Policy</a>.</li>
-        <li><strong>Stripe:</strong> Processes all payments. Your card information never touches our servers. See <a href="https://stripe.com/privacy" style="color:#6366f1;">Stripe's Privacy Policy</a>.</li>
-        <li><strong>Vercel:</strong> Hosts the website and API. See <a href="https://vercel.com/legal/privacy-policy" style="color:#6366f1;">Vercel's Privacy Policy</a>.</li>
+        <li><strong>Supabase:</strong> Provides email-and-password authentication, login sessions, email confirmation, and password-reset functionality. Passwords are handled through Supabase authentication and are not stored directly in MyPitchGym frontend source code.</li>
+        <li><strong>OpenAI:</strong> Processes information needed for live roleplay, coaching, and script tools, including practice content such as product info, scripts, objections, and transcripts. See <a href="https://openai.com/privacy" style="color:#6366f1;">OpenAI's Privacy Policy</a>.</li>
+        <li><strong>Vercel:</strong> Hosts the website and serverless functions. See <a href="https://vercel.com/legal/privacy-policy" style="color:#6366f1;">Vercel's Privacy Policy</a>.</li>
       </ul>
 
       <h2>4. Data Storage</h2>
-      <p>Your subscription status is stored locally in your browser (localStorage). It is not sent to or stored on our servers. Your practice content is processed in real-time through the OpenAI API and is not persisted in our database.</p>
+      <p>Your subscription status is currently stored locally in your browser (localStorage). The new account foundation exists, but saved sessions, recordings, billing, and usage tracking are future features.</p>
 
-      <p>If you use a supported browser, voice input and output are handled entirely by your device's browser using the Web Speech API. Your voice is not recorded, stored, or transmitted — it is processed locally and sent as text to the AI.</p>
+      <p>MyPitchGym does not currently save completed roleplay transcripts, call recordings, or session history to customer accounts. Practice content is processed through the services needed to provide the live experience and coaching.</p>
 
       <h2>5. Data Retention</h2>
-      <p>We do not retain your practice content (scripts, transcripts, product information) after your session ends. Transaction records are retained by Stripe according to their policies.</p>
+      <p>Account authentication records are handled through Supabase. Completed roleplay transcripts, call recordings, and session history are not currently saved to customer accounts. This policy will need another update before transcripts, recordings, saved sessions, production billing, or usage tracking are enabled.</p>
 
       <h2>6. Cookies</h2>
       <p>We do not use tracking cookies. If we enable analytics in the future, we will use privacy-respecting tools and update this policy.</p>
@@ -63,8 +64,8 @@
       <h2>7. Your Rights</h2>
       <p>You have the right to:</p>
       <ul>
-        <li>Request deletion of any data we hold about you (contact us via the email on the homepage)</li>
-        <li>Cancel your subscription at any time</li>
+        <li>Request deletion of any data we hold about you through the contact method provided by MyPitchGym</li>
+        <li>Manage your login information through the account and password-reset flow</li>
         <li>Clear your local data by clearing your browser's localStorage</li>
       </ul>
 
@@ -78,7 +79,7 @@
       <p>We may update this Privacy Policy from time to time. We will update the "Last updated" date above. Continued use of the Service after changes constitutes acceptance of the updated policy.</p>
 
       <h2>11. Contact</h2>
-      <p>For privacy questions or data requests, contact us at the email provided on the homepage.</p>
+      <p>For privacy questions or data requests, contact us through the contact method provided by MyPitchGym.</p>
     </div>
   </div>
 </body>

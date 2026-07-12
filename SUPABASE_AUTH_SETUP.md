@@ -51,3 +51,20 @@ This branch only adds a basic authentication foundation. The existing practice a
 The new `dashboard.html` page has a frontend login check only. It does not yet provide server-side subscription enforcement.
 
 Do not add Production Supabase or Vercel auth settings until preview testing is complete and Jonnie approves merging this branch.
+
+## Production rollout later
+
+Before merging this account foundation to production, Jonnie will need to:
+
+1. Add the production website URL to Supabase URL Configuration.
+2. Add full production redirect URLs for:
+   - `/login.html`
+   - `/dashboard.html`
+   - `/reset-password.html`
+3. Add these Vercel environment variables to the Production environment:
+   - `SUPABASE_URL`
+   - `SUPABASE_PUBLISHABLE_KEY`
+4. Create a new production deployment after the variables are added.
+5. Test signup, confirmation, login, logout, and password reset on production.
+6. Keep Supabase secret and service-role keys out of browser code.
+7. Configure branded custom SMTP before a public launch or meaningful customer traffic.

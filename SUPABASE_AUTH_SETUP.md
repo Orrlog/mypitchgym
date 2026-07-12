@@ -19,24 +19,28 @@ In Supabase, enable email and password authentication.
 
 Configure the Site URL and Redirect URLs for the Vercel Preview deployment used to test this branch. Use the actual preview address Vercel creates, for example:
 
-- Site URL: `https://YOUR-VERCEL-PREVIEW-URL`
-- Redirect URL: `https://YOUR-VERCEL-PREVIEW-URL/login.html`
-- Redirect URL: `https://YOUR-VERCEL-PREVIEW-URL/dashboard.html`
-- Redirect URL: `https://YOUR-VERCEL-PREVIEW-URL/reset-password.html`
+- Site URL: `https://YOUR-PREVIEW-DOMAIN.vercel.app`
+- Redirect URL: `https://YOUR-PREVIEW-DOMAIN.vercel.app/login.html`
+- Redirect URL: `https://YOUR-PREVIEW-DOMAIN.vercel.app/dashboard.html`
+- Redirect URL: `https://YOUR-PREVIEW-DOMAIN.vercel.app/reset-password.html`
 
-Password reset must allow this page:
+Each Redirect URL must be the full URL. Include `https://`, the complete Vercel preview domain, and the page path.
 
-- `/reset-password.html`
+Password reset must allow this full page URL:
 
-Email confirmation should redirect to an appropriate preview page, usually:
+- `https://YOUR-PREVIEW-DOMAIN.vercel.app/reset-password.html`
 
-- `/dashboard.html`
+Email confirmation should redirect to an appropriate full preview URL, usually:
+
+- `https://YOUR-PREVIEW-DOMAIN.vercel.app/dashboard.html`
 
 or:
 
-- `/login.html`
+- `https://YOUR-PREVIEW-DOMAIN.vercel.app/login.html`
 
 Use the full preview URL in Supabase, not just the path.
+
+A carefully limited Vercel preview wildcard can sometimes be used, but exact preview URLs are preferred for this first test. Do not use a wildcard unless you know the correct Vercel account or team slug.
 
 ## Important limits in this phase
 

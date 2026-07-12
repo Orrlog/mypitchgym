@@ -30,6 +30,10 @@ module.exports = async (req, res) => {
       instructions: "",
       audio: {
         input: {
+          transcription: {
+            model: "gpt-4o-mini-transcribe",
+            language: "en"
+          },
           turn_detection: {
             type: "semantic_vad",
             eagerness: "auto",

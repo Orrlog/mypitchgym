@@ -12,6 +12,7 @@ const App = {
     isSubscribed: false,
     callMode: "roleplay",
     callActive: false,
+    endingCall: false,
     localStream: null,
     coachingData: null
   },
@@ -132,6 +133,7 @@ const App = {
     this.state.callMode = mode;
     this.state.transcript = [];
     this.state.callActive = false;
+    this.state.endingCall = false;
 
     // Collect form data on first roleplay
     if (mode === "roleplay" && this.state.step === 1) {
@@ -227,8 +229,6 @@ const App = {
     };
     RealtimeClient.onConnected = () => {
       this.state.callActive = true;
-      // Enable transcription after connection for coaching/scoring
-      RealtimeClient.enableTranscription();
       this.updateCallStatus("Connected - just talk naturally");
       this.setAvatarMode("listening", this.state.callMode === "reversal" ? "AI Pitches" : "Listening");
 
@@ -252,6 +252,7 @@ const App = {
         "Listening": "Your turn - just talk",
         "Processing": "Processing...",
         "Connection lost": "Connection lost",
+        "Finalizing": "Finalizing transcript...",
         "Session ended": "Call ended"
       };
       if (labels[status] !== undefined) {
@@ -275,51 +276,95 @@ const App = {
     }
   },
 
-  endCall() {
-    this.state.callActive = false;
+  async endCall() {
+    if (this.state.endingCall) return;
 
-    // Try to grab conversation history before disconnecting
-    if (RealtimeClient.dc && RealtimeClient.dc.readyState === "open") {
-      RealtimeClient.requestConversationHistory();
+    this.state.callActive = false;
+    this.state.endingCall = true;
+    this.updateCallStatus("Finalizing transcript...");
+
+    const endButton = document.getElementById("btnEndCall");
+    const startButton = document.getElementById("btnStartCall");
+    if (endButton) endButton.disabled = true;
+
+    let finalization = {
+      transcript: Array.isArray(this.state.transcript) ? this.state.transcript.slice() : [],
+      timedOut: false,
+      pendingItemCount: 0,
+      pendingResponseCount: 0
+    };
+
+    try {
+      finalization = await RealtimeClient.finalizeTranscript({ timeoutMs: 3500, pollMs: 80 });
+    } catch (err) {
+      console.warn("[App] Transcript finalization failed:", err.message);
     }
 
-    // Delay to let final transcript events arrive from the data channel.
-    // conversation.item.list response takes a moment to arrive.
-    setTimeout(() => {
-      RealtimeClient.disconnect();
+    RealtimeClient.disconnect();
 
-      if (this.state.localStream) {
-        this.state.localStream.getTracks().forEach(t => t.stop());
-        this.state.localStream = null;
-      }
+    if (this.state.localStream) {
+      this.state.localStream.getTracks().forEach(t => t.stop());
+      this.state.localStream = null;
+    }
 
-      this.setAvatarMode("idle", "");
-      if (typeof Avatar !== "undefined") Avatar.disconnectAudio();
-      this.updateCallStatus("Call ended");
+    this.setAvatarMode("idle", "");
+    if (typeof Avatar !== "undefined") Avatar.disconnectAudio();
+    this.updateCallStatus("Call ended");
 
-      document.getElementById("btnStartCall").disabled = false;
-      document.getElementById("btnEndCall").disabled = true;
+    if (startButton) startButton.disabled = false;
+    if (endButton) endButton.disabled = true;
+    this.state.endingCall = false;
 
-      console.log("[App] Final transcript length:", this.state.transcript.length);
-      console.log("[App] Transcript:", JSON.stringify(this.state.transcript));
+    this.state.transcript = finalization.transcript || RealtimeClient.transcript || [];
 
-      if (this.state.transcript.length < 1) {
-        // No transcript captured. Show a clear message and stay on the call screen
-        // so the user can see something went wrong instead of being bounced to step 1.
-        this.addChatMessage("system", "Call ended, but no transcript was captured. This can happen if the connection dropped or the browser blocked transcription. Try another call.");
-        this.updateCallStatus("No transcript captured");
-        return;
-      }
+    if (this.isRealtimeDebugEnabled()) {
+      console.log("[App] Final transcript summary:", {
+        turns: this.state.transcript.length,
+        timed_out: !!finalization.timedOut,
+        pending_items: finalization.pendingItemCount || 0,
+        pending_responses: finalization.pendingResponseCount || 0
+      });
+    }
 
-      if (this.state.callMode === "reversal") {
-        this.showReversalTranscript();
-        return;
-      }
+    if (this.state.transcript.length < 1) {
+      const timeoutDetail = finalization.timedOut ? " The final transcript timed out before any usable turns arrived." : "";
+      this.addChatMessage("system", "Call ended, but no reliable transcript was captured." + timeoutDetail + " Try another call before requesting coaching.");
+      this.updateCallStatus("No reliable transcript");
+      return;
+    }
 
-      this.updateCallStatus("Analyzing your call...");
-      this.getCoaching();
-    }, 1200);
+    if (this.state.callMode === "reversal") {
+      this.showReversalTranscript();
+      return;
+    }
 
+    if (!this.hasMeaningfulCoachingTranscript(this.state.transcript)) {
+      const timeoutDetail = finalization.timedOut ? " Some final transcript events did not arrive in time." : "";
+      this.addChatMessage("system", "Call ended, but there was not enough finalized back-and-forth to generate reliable coaching." + timeoutDetail + " Try another call with at least one full exchange.");
+      this.updateCallStatus("Not enough transcript for coaching");
+      return;
+    }
+
+    this.updateCallStatus("Analyzing your call...");
+    this.getCoaching();
+  },
+
+  hasMeaningfulCoachingTranscript(transcript) {
+    if (!Array.isArray(transcript) || transcript.length < 2) return false;
+    const hasUser = transcript.some(msg => msg.role === "user" && msg.content && msg.content.trim());
+    const hasAssistant = transcript.some(msg => msg.role === "assistant" && msg.content && msg.content.trim());
+    return hasUser && hasAssistant;
+  },
+
+  isRealtimeDebugEnabled() {
+    try {
+      return localStorage.getItem("mpg_realtime_debug") === "true" ||
+        location.hostname === "localhost" ||
+        location.hostname === "127.0.0.1" ||
+        location.hostname === "[::1]";
+    } catch (e) {
+      return false;
+    }
   },
 
   showReversalTranscript() {

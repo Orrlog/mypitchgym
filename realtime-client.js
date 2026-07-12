@@ -32,18 +32,42 @@ const RealtimeClient = {
   onConnected: null,
   onStatusChange: null,
 
-  // Track state to avoid duplicate events
+  // Live session state
   _aiSpeaking: false,
   _userSpeaking: false,
-  _currentResponseText: "",
+  _currentResponseId: null,
+  _currentAssistantItemId: null,
+  _activeUserItemId: null,
+  _activeUserStartedBeforeEnd: false,
+  _ending: false,
+
+  // Transcript collector state
+  _items: null,
+  _itemSequence: 0,
+  _responses: null,
+  _internalUserTextQueue: null,
+  _lastTranscriptSignature: "",
+
+  resetTranscriptCollector() {
+    this.transcript = [];
+    this._items = new Map();
+    this._itemSequence = 0;
+    this._responses = new Map();
+    this._internalUserTextQueue = [];
+    this._lastTranscriptSignature = "";
+    this._currentResponseId = null;
+    this._currentAssistantItemId = null;
+    this._activeUserItemId = null;
+    this._activeUserStartedBeforeEnd = false;
+    this._ending = false;
+  },
 
   async connect(config) {
-    this.transcript = [];
+    this.resetTranscriptCollector();
     this.localStream = config.localStream;
     this.callActive = true;
     this._aiSpeaking = false;
     this._userSpeaking = false;
-    this._currentResponseText = "";
 
     // Check browser support
     if (!window.RTCPeerConnection) {
@@ -82,7 +106,7 @@ const RealtimeClient = {
       // Peer connection state monitoring
       this.pc.onconnectionstatechange = () => {
         const state = this.pc ? this.pc.connectionState : "closed";
-        console.log("[Realtime] Peer connection state:", state);
+        this._devLog("Peer connection state", { state });
 
         switch (state) {
           case "connecting":
@@ -127,8 +151,12 @@ const RealtimeClient = {
       });
 
       if (!response.ok) {
-        const err = await response.json();
-        throw new Error(err.error || "Server connection failed");
+        let message = "Server connection failed";
+        try {
+          const err = await response.json();
+          message = err.error || message;
+        } catch (e) {}
+        throw new Error(message);
       }
 
       const { sdp: answerSdp } = await response.json();
@@ -139,8 +167,8 @@ const RealtimeClient = {
 
       await this.pc.setRemoteDescription({ type: "answer", sdp: answerSdp });
 
-      // Connection is being established
-      // onConnected will fire when data channel opens
+      // Connection is being established.
+      // onConnected will fire when data channel opens.
 
     } catch (err) {
       console.error("[Realtime] Connect error:", err.message);
@@ -151,7 +179,7 @@ const RealtimeClient = {
 
   setupDataChannel() {
     this.dc.onopen = () => {
-      console.log("[Realtime] Data channel opened");
+      this._devLog("Data channel opened");
       if (this.onConnected) this.onConnected();
     };
 
@@ -160,7 +188,6 @@ const RealtimeClient = {
         const data = JSON.parse(event.data);
         this.handleEvent(data);
       } catch (e) {
-        // Malformed message - do not crash
         console.warn("[Realtime] Malformed data channel message:", e.message);
       }
     };
@@ -171,7 +198,7 @@ const RealtimeClient = {
     };
 
     this.dc.onclose = () => {
-      console.log("[Realtime] Data channel closed");
+      this._devLog("Data channel closed");
       if (this.callActive) {
         if (this.onError) this.onError("Connection closed unexpectedly");
       }
@@ -181,217 +208,765 @@ const RealtimeClient = {
   handleEvent(data) {
     if (!data || !data.type) return;
 
-    // Dev logging
-    console.log("[Realtime] Event:", data.type);
-
     switch (data.type) {
       // === User speech detection (semantic VAD) ===
       case "input_audio_buffer.speech_started":
-        // User started speaking
-        this._userSpeaking = true;
-        this.timing.interruptionStart = Date.now();
-
-        // If AI was speaking, this is an interruption
-        if (this._aiSpeaking) {
-          console.log("[Realtime] User interrupted AI");
-          this._aiSpeaking = false;
-          if (this.onAIStopSpeaking) this.onAIStopSpeaking();
-        }
-        this._setStatus("User speaking");
+        this._handleSpeechStarted(data);
         break;
 
       case "input_audio_buffer.speech_stopped":
-        // User stopped speaking - mark turn end for timing
-        this._userSpeaking = false;
-        this.timing.userTurnEnd = Date.now();
-        this._currentResponseText = "";
-        this._setStatus("Processing");
+        this._handleSpeechStopped(data);
         break;
 
       case "input_audio_buffer.committed":
-        // User audio committed for processing
+        this._handleInputCommitted(data);
+        break;
+
+      // === Conversation items and input transcription ===
+      case "conversation.item.added":
+      case "conversation.item.created":
+        this._handleConversationItem(data, "added");
+        break;
+
+      case "conversation.item.done":
+        this._handleConversationItem(data, "done");
+        break;
+
+      case "conversation.item.retrieved":
+        this._handleConversationItem(data, "retrieved");
+        break;
+
+      case "conversation.item.truncated":
+        this._handleConversationItemTruncated(data);
+        break;
+
+      case "conversation.item.input_audio_transcription.delta":
+        this._handleUserTranscriptDelta(data);
         break;
 
       case "conversation.item.input_audio_transcription.completed":
-        // User speech transcription completed
-        if (data.transcript) {
-          const text = data.transcript;
-          const last = this.transcript[this.transcript.length - 1];
-          if (!last || last.role !== "user" || last.content !== text) {
-            this.transcript.push({ role: "user", content: text });
-            if (this.onUserText) this.onUserText(text);
-            if (this.onTranscriptUpdate) this.onTranscriptUpdate(this.transcript);
-          }
-        }
+        this._handleUserTranscriptCompleted(data);
         break;
 
-      // Catch text output events (when text modality is enabled)
-      case "response.text.delta":
-        if (data.delta) {
-          this._currentResponseText += data.delta;
-        }
+      case "conversation.item.input_audio_transcription.failed":
+        this._handleUserTranscriptFailed(data);
         break;
 
-      case "response.text.done":
-        if (data.text) {
-          const last = this.transcript[this.transcript.length - 1];
-          if (!last || last.role !== "assistant" || last.content !== data.text) {
-            this.transcript.push({ role: "assistant", content: data.text });
-            if (this.onAIText) this.onAIText(data.text);
-            if (this.onTranscriptUpdate) this.onTranscriptUpdate(this.transcript);
-          }
-          this._currentResponseText = "";
-        }
-        break;
-
-      // === Conversation items (transcripts) ===
-      case "conversation.item.created":
-        if (data.item && data.item.type === "message") {
-          const role = data.item.role;
-          const content = data.item.content;
-          if (content && content.length > 0) {
-            for (const c of content) {
-              const text = c.transcript || c.text || "";
-              if (text) {
-                if (role === "user") {
-                  const last = this.transcript[this.transcript.length - 1];
-                  if (!last || last.role !== "user" || last.content !== text) {
-                    this.transcript.push({ role: "user", content: text });
-                    if (this.onUserText) this.onUserText(text);
-                  }
-                } else if (role === "assistant") {
-                  const last = this.transcript[this.transcript.length - 1];
-                  if (!last || last.role !== "assistant" || last.content !== text) {
-                    this.transcript.push({ role: "assistant", content: text });
-                    if (this.onAIText) this.onAIText(text);
-                  }
-                }
-                if (this.onTranscriptUpdate) this.onTranscriptUpdate(this.transcript);
-              }
-            }
-          }
-        }
-        break;
-
-      // === AI response events ===
+      // === AI response lifecycle ===
       case "response.created":
-        // AI response started
-        this._currentResponseText = "";
+        this._handleResponseCreated(data);
         break;
 
-      case "response.audio.delta":
-        // First audio chunk - mark timing
-        if (!this._aiSpeaking) {
-          this._aiSpeaking = true;
-          this.timing.firstAudioTime = Date.now();
-
-          // Measure latency: user turn end -> first AI audio
-          if (this.timing.userTurnEnd) {
-            const latency = this.timing.firstAudioTime - this.timing.userTurnEnd;
-            console.log("[Realtime] Latency (user turn end -> first AI audio): " + latency + "ms");
-
-            // Measure interruption delay
-            if (this.timing.interruptionStart) {
-              const interruptDelay = this.timing.firstAudioTime - this.timing.interruptionStart;
-              console.log("[Realtime] Interruption processing time: " + interruptDelay + "ms");
-            }
-          }
-
-          this._setStatus("AI responding");
-          if (this.onAIStartSpeaking) this.onAIStartSpeaking();
-        }
+      case "response.output_item.added":
+        this._handleResponseOutputItem(data, "added");
         break;
 
-      case "response.audio_transcript.delta":
-        // Accumulate AI speech transcript
-        if (data.delta) {
-          this._currentResponseText += data.delta;
-        }
+      case "response.output_item.done":
+        this._handleResponseOutputItem(data, "done");
+        break;
+
+      case "response.output_audio.delta":
+        this._handleOutputAudioDelta(data);
+        break;
+
+      case "response.output_audio.done":
+        this._handleOutputAudioDone(data);
+        break;
+
+      case "response.output_audio_transcript.delta":
+        this._handleAssistantTranscriptDelta(data);
+        break;
+
+      case "response.output_audio_transcript.done":
+        this._handleAssistantTranscriptDone(data);
+        break;
+
+      case "response.output_text.delta":
+        this._handleAssistantTextDelta(data);
+        break;
+
+      case "response.output_text.done":
+        this._handleAssistantTextDone(data);
         break;
 
       case "response.done":
-        // AI finished responding - save accumulated transcript text
-        this._aiSpeaking = false;
-        if (this._currentResponseText && this._currentResponseText.trim()) {
-          const last = this.transcript[this.transcript.length - 1];
-          if (!last || last.role !== "assistant" || last.content !== this._currentResponseText.trim()) {
-            this.transcript.push({ role: "assistant", content: this._currentResponseText.trim() });
-            if (this.onAIText) this.onAIText(this._currentResponseText.trim());
-            if (this.onTranscriptUpdate) this.onTranscriptUpdate(this.transcript);
-          }
-          this._currentResponseText = "";
-        }
-        if (this.onAIStopSpeaking) this.onAIStopSpeaking();
-        this._setStatus("Listening");
-        break;
-
-      case "response.cancelled":
-        // AI response was cancelled (user interrupted) - save partial transcript
-        this._aiSpeaking = false;
-        if (this._currentResponseText && this._currentResponseText.trim()) {
-          const last = this.transcript[this.transcript.length - 1];
-          if (!last || last.role !== "assistant" || last.content !== this._currentResponseText.trim()) {
-            this.transcript.push({ role: "assistant", content: this._currentResponseText.trim() });
-            if (this.onAIText) this.onAIText(this._currentResponseText.trim());
-            if (this.onTranscriptUpdate) this.onTranscriptUpdate(this.transcript);
-          }
-          this._currentResponseText = "";
-        }
-        if (this.onAIStopSpeaking) this.onAIStopSpeaking();
-        this._setStatus("Listening");
-
-        // Log interruption timing
-        if (this.timing.interruptionStart) {
-          this.timing.interruptionEnd = Date.now();
-          const stopDelay = this.timing.interruptionEnd - this.timing.interruptionStart;
-          console.log("[Realtime] AI stopped " + stopDelay + "ms after user started speaking");
-        }
+        this._handleResponseDone(data);
         break;
 
       case "error":
-        console.error("[Realtime] API error:", data.error);
+        console.error("[Realtime] API error:", this._safeError(data.error));
         if (this.onError) this.onError(data.error ? data.error.message : "Realtime API error");
         break;
 
-      case "session.updated":
-        console.log("[Realtime] Session updated:", data.session ? "ok" : "unknown");
-        break;
-
       case "conversation.created":
-        console.log("[Realtime] Conversation created");
-        break;
-
-      case "conversation.item.list":
-      case "conversation.retrieved":
-        // Response to conversation.item.list or conversation.retrieve - contains full history
-        // conversation.item.list returns { items: [...] }
-        // conversation.retrieved returns { conversation: { items: [...] } }
-        var items = data.items || (data.conversation && data.conversation.items) || [];
-        if (items && items.length > 0) {
-          console.log("[Realtime] Retrieved conversation with " + items.length + " items");
-          for (const item of items) {
-            if (item.type === "message" && item.content) {
-              const role = item.role;
-              for (const c of item.content) {
-                const text = c.transcript || c.text || "";
-                if (text) {
-                  const last = this.transcript[this.transcript.length - 1];
-                  if (!last || last.role !== role || last.content !== text) {
-                    this.transcript.push({ role: role, content: text });
-                  }
-                }
-              }
-            }
-          }
-          if (this.onTranscriptUpdate) this.onTranscriptUpdate(this.transcript);
-        }
+        this._diag(data, "conversation_created");
         break;
 
       default:
-        // Log any unhandled events so we can see what the API sends
-        console.log("[Realtime] Unhandled event:", data.type, data);
+        this._devLog("Unhandled event", this._safeEventSummary(data));
         break;
     }
+  },
+
+  _handleSpeechStarted(data) {
+    this._userSpeaking = true;
+    this.timing.interruptionStart = Date.now();
+    this._activeUserItemId = data.item_id || this._activeUserItemId;
+    this._activeUserStartedBeforeEnd = !this._ending;
+
+    const item = this._ensureItem(this._activeUserItemId, "user");
+    if (item) {
+      item.state = "speaking";
+      item.startedBeforeEnd = !this._ending;
+      if (this._ending) item.ignoreAfterEnd = true;
+    }
+
+    // If AI was speaking, this is an interruption.
+    if (this._aiSpeaking) {
+      this._devLog("User interrupted AI", {
+        response_id: this._currentResponseId,
+        item_id: this._currentAssistantItemId
+      });
+      this._aiSpeaking = false;
+      if (this.onAIStopSpeaking) this.onAIStopSpeaking();
+    }
+
+    this._diag(data, "user_speech_started");
+    this._setStatus("User speaking");
+  },
+
+  _handleSpeechStopped(data) {
+    this._userSpeaking = false;
+    this.timing.userTurnEnd = Date.now();
+
+    const itemId = data.item_id || this._activeUserItemId;
+    const item = this._ensureItem(itemId, "user");
+    if (item) item.state = "speech_stopped";
+
+    this._diag(data, "user_speech_stopped");
+    this._setStatus(this._ending ? "Finalizing" : "Processing");
+  },
+
+  _handleInputCommitted(data) {
+    const item = this._ensureItem(data.item_id || this._activeUserItemId, "user");
+    if (item) {
+      item.state = "committed";
+      item.startedBeforeEnd = item.startedBeforeEnd || this._activeUserStartedBeforeEnd;
+      this._setPreviousItem(item, data.previous_item_id);
+      if (this._ending && !item.startedBeforeEnd && !item.finalText) item.ignoreAfterEnd = true;
+    }
+    this._activeUserItemId = null;
+    this._activeUserStartedBeforeEnd = false;
+    this._diag(data, "user_audio_committed");
+  },
+
+  _handleConversationItem(data, phase) {
+    const item = this._registerOpenAIItem(data.item, data.previous_item_id);
+    if (!item) return;
+
+    if (phase === "done") {
+      item.itemDone = true;
+      item.state = item.state === "completed" ? item.state : "item_done";
+      const text = this._extractItemTranscript(data.item);
+      if (text) this._setFinalText(item, text, "conversation.item.done", 2);
+    } else if (phase === "retrieved") {
+      item.retrieveDone = true;
+      const text = this._extractItemTranscript(data.item);
+      if (text) this._setFinalText(item, text, "conversation.item.retrieved", 2);
+    }
+
+    this._diag(data, "conversation_item_" + phase, item);
+    this._emitTranscriptUpdate();
+  },
+
+  _handleConversationItemTruncated(data) {
+    const item = this._ensureItem(data.item_id, "assistant");
+    if (item) {
+      const response = item.responseId && this._responses ? this._responses.get(item.responseId) : null;
+      const cancelledByEnd = this._ending || (response && response.cancelledByEnd);
+      item.state = "truncated";
+      item.truncated = true;
+      if (cancelledByEnd) item.cancelledByEnd = true;
+      if (cancelledByEnd && !item.emittedText) {
+        item.finalText = "";
+        item.finalSourceRank = 0;
+      }
+    }
+    this._diag(data, "conversation_item_truncated", item);
+    this._emitTranscriptUpdate();
+  },
+
+  _handleUserTranscriptDelta(data) {
+    const item = this._ensureItem(data.item_id, "user");
+    if (!item || item.ignoreAfterEnd) return;
+    item.userPartialText = (item.userPartialText || "") + (data.delta || "");
+    item.transcriptState = "streaming";
+    this._diag(data, "user_transcript_delta", item);
+  },
+
+  _handleUserTranscriptCompleted(data) {
+    const item = this._ensureItem(data.item_id, "user");
+    if (!item || item.ignoreAfterEnd) return;
+    item.transcriptState = "completed";
+    this._setFinalText(item, data.transcript || "", "conversation.item.input_audio_transcription.completed", 3);
+    this._diag(data, "user_transcript_completed", item);
+    this._emitTranscriptUpdate();
+  },
+
+  _handleUserTranscriptFailed(data) {
+    const item = this._ensureItem(data.item_id, "user");
+    if (item) {
+      item.transcriptState = "failed";
+      item.state = "failed";
+      item.failed = true;
+      item.failureReason = data.error ? data.error.code || data.error.type || "transcription_failed" : "transcription_failed";
+    }
+    console.warn("[Realtime] Input transcription failed:", {
+      item_id: data.item_id || null,
+      code: data.error ? data.error.code || null : null,
+      type: data.error ? data.error.type || null : null
+    });
+    this._diag(data, "user_transcript_failed", item);
+    this._emitTranscriptUpdate();
+  },
+
+  _handleResponseCreated(data) {
+    const response = data.response || {};
+    const responseId = response.id || data.response_id || null;
+    if (responseId) {
+      const tracked = this._ensureResponse(responseId);
+      tracked.status = response.status || "in_progress";
+      tracked.done = false;
+      this._currentResponseId = responseId;
+    }
+    this._diag(data, "response_created");
+  },
+
+  _handleResponseOutputItem(data, phase) {
+    const item = this._registerOpenAIItem(data.item, null, {
+      role: data.item && data.item.role ? data.item.role : "assistant",
+      responseId: data.response_id,
+      outputIndex: data.output_index
+    });
+
+    if (data.response_id) {
+      const response = this._ensureResponse(data.response_id);
+      if (item && !response.itemIds.includes(item.id)) response.itemIds.push(item.id);
+    }
+
+    if (item) {
+      item.responseId = data.response_id || item.responseId;
+      item.outputIndex = data.output_index !== undefined ? data.output_index : item.outputIndex;
+      if (phase === "added") {
+        item.state = "output_item_added";
+        if (item.role === "assistant") this._currentAssistantItemId = item.id;
+      } else {
+        item.outputItemDone = true;
+        item.state = item.state === "completed" ? item.state : "output_item_done";
+        const text = this._extractItemTranscript(data.item);
+        if (text) this._setFinalText(item, text, "response.output_item.done", 2);
+      }
+    }
+
+    this._diag(data, "response_output_item_" + phase, item);
+    this._emitTranscriptUpdate();
+  },
+
+  _handleOutputAudioDelta(data) {
+    const item = this._ensureItem(data.item_id || this._currentAssistantItemId, "assistant");
+    if (item) {
+      item.responseId = data.response_id || item.responseId;
+      item.outputIndex = data.output_index !== undefined ? data.output_index : item.outputIndex;
+      this._currentAssistantItemId = item.id;
+    }
+
+    if (data.response_id) this._currentResponseId = data.response_id;
+
+    if (!this._aiSpeaking) {
+      this._aiSpeaking = true;
+      this.timing.firstAudioTime = Date.now();
+
+      if (this.timing.userTurnEnd) {
+        const latency = this.timing.firstAudioTime - this.timing.userTurnEnd;
+        this._devLog("Latency", { user_turn_end_to_first_ai_audio_ms: latency });
+
+        if (this.timing.interruptionStart) {
+          const interruptDelay = this.timing.firstAudioTime - this.timing.interruptionStart;
+          this._devLog("Interruption processing time", { ms: interruptDelay });
+        }
+      }
+
+      this._setStatus("AI responding");
+      if (this.onAIStartSpeaking) this.onAIStartSpeaking();
+    }
+
+    this._diag(data, "assistant_audio_delta", item);
+  },
+
+  _handleOutputAudioDone(data) {
+    const item = this._ensureItem(data.item_id || this._currentAssistantItemId, "assistant");
+    if (item) item.audioDone = true;
+    this._diag(data, "assistant_audio_done", item);
+  },
+
+  _handleAssistantTranscriptDelta(data) {
+    const item = this._ensureItem(data.item_id || this._currentAssistantItemId, "assistant");
+    if (!item || item.cancelledByEnd) return;
+    item.responseId = data.response_id || item.responseId;
+    item.assistantPartialText = (item.assistantPartialText || "") + (data.delta || "");
+    item.state = "transcript_streaming";
+    item.transcriptState = "streaming";
+    this._diag(data, "assistant_transcript_delta", item);
+  },
+
+  _handleAssistantTranscriptDone(data) {
+    const item = this._ensureItem(data.item_id || this._currentAssistantItemId, "assistant");
+    if (!item) return;
+    item.responseId = data.response_id || item.responseId;
+    item.outputIndex = data.output_index !== undefined ? data.output_index : item.outputIndex;
+    item.transcriptState = "completed";
+    this._setFinalText(item, data.transcript || "", "response.output_audio_transcript.done", 3);
+    this._diag(data, "assistant_transcript_done", item);
+    this._emitTranscriptUpdate();
+  },
+
+  _handleAssistantTextDelta(data) {
+    const item = this._ensureItem(data.item_id || this._currentAssistantItemId, "assistant");
+    if (!item || item.cancelledByEnd) return;
+    item.assistantTextPartial = (item.assistantTextPartial || "") + (data.delta || "");
+    item.state = "text_streaming";
+    item.transcriptState = "text_streaming";
+    this._diag(data, "assistant_text_delta", item);
+  },
+
+  _handleAssistantTextDone(data) {
+    const item = this._ensureItem(data.item_id || this._currentAssistantItemId, "assistant");
+    if (!item) return;
+    item.transcriptState = "completed";
+    this._setFinalText(item, data.text || "", "response.output_text.done", 3);
+    this._diag(data, "assistant_text_done", item);
+    this._emitTranscriptUpdate();
+  },
+
+  _handleResponseDone(data) {
+    const response = data.response || {};
+    const responseId = response.id || data.response_id || this._currentResponseId;
+    const status = response.status || data.status || "completed";
+
+    if (responseId) {
+      const tracked = this._ensureResponse(responseId);
+      tracked.status = status;
+      tracked.done = true;
+      tracked.statusDetails = response.status_details || null;
+
+      if (tracked.cancelledByEnd || status === "failed") {
+        for (const itemId of tracked.itemIds) {
+          const item = this._items.get(itemId);
+          if (!item) continue;
+          if (tracked.cancelledByEnd) item.cancelledByEnd = true;
+          if (status === "failed" && !item.finalText) item.failed = true;
+          if (!item.finalText) item.state = tracked.cancelledByEnd ? "cancelled" : status;
+        }
+      }
+    }
+
+    this._aiSpeaking = false;
+    if (responseId && this._currentResponseId === responseId) this._currentResponseId = null;
+    this._currentAssistantItemId = null;
+
+    if (this.onAIStopSpeaking) this.onAIStopSpeaking();
+    if (!this._ending) this._setStatus("Listening");
+
+    this._diag(data, "response_done");
+    this._emitTranscriptUpdate();
+  },
+
+  async finalizeTranscript(options) {
+    const timeoutMs = options && options.timeoutMs ? options.timeoutMs : 3500;
+    const pollMs = options && options.pollMs ? options.pollMs : 80;
+    const startedAt = Date.now();
+
+    this._ending = true;
+    this._setStatus("Finalizing");
+
+    if (this._aiSpeaking || this._hasOpenResponses()) {
+      this._cancelActiveResponseForEnd();
+    }
+
+    this._requestPendingItemRetrievals();
+
+    return new Promise((resolve) => {
+      const check = () => {
+        this._requestPendingItemRetrievals();
+
+        const pendingItems = this._getPendingTranscriptItems();
+        const pendingResponses = this._getPendingResponseIds();
+        const elapsed = Date.now() - startedAt;
+
+        if ((pendingItems.length === 0 && pendingResponses.length === 0) || elapsed >= timeoutMs) {
+          const timedOut = pendingItems.length > 0 || pendingResponses.length > 0;
+          if (timedOut) {
+            this._markTimedOut(pendingItems, pendingResponses);
+          }
+
+          this._emitTranscriptUpdate();
+          resolve({
+            transcript: this.transcript.slice(),
+            timedOut,
+            pendingItemCount: pendingItems.length,
+            pendingResponseCount: pendingResponses.length
+          });
+          return;
+        }
+
+        setTimeout(check, pollMs);
+      };
+
+      check();
+    });
+  },
+
+  _cancelActiveResponseForEnd() {
+    if (!this.dc || this.dc.readyState !== "open") return;
+
+    const responseId = this._currentResponseId || this._getFirstOpenResponseId();
+    if (responseId) {
+      const tracked = this._ensureResponse(responseId);
+      tracked.cancelledByEnd = true;
+      for (const itemId of tracked.itemIds) {
+        const item = this._items.get(itemId);
+        if (item && !item.finalText) {
+          item.cancelledByEnd = true;
+          item.state = "cancel_requested";
+        }
+      }
+    }
+
+    try {
+      const event = { type: "response.cancel" };
+      if (responseId) event.response_id = responseId;
+      this.dc.send(JSON.stringify(event));
+      this._devLog("Requested response cancel for end-call finalization", { response_id: responseId || null });
+    } catch (e) {
+      console.warn("[Realtime] Failed to cancel active response:", e.message);
+    }
+  },
+
+  _requestPendingItemRetrievals() {
+    if (!this.dc || this.dc.readyState !== "open") return;
+
+    for (const item of this._getPendingTranscriptItems()) {
+      if (!item.id || item.retrieveRequested || item.ignoreAfterEnd || item.cancelledByEnd) continue;
+      try {
+        item.retrieveRequested = true;
+        this.dc.send(JSON.stringify({
+          type: "conversation.item.retrieve",
+          item_id: item.id
+        }));
+        this._diag({ type: "conversation.item.retrieve", item_id: item.id }, "item_retrieve_requested", item);
+      } catch (e) {
+        console.warn("[Realtime] Failed to retrieve conversation item:", e.message);
+      }
+    }
+  },
+
+  _getPendingTranscriptItems() {
+    const pending = [];
+    if (!this._items) return pending;
+
+    for (const item of this._items.values()) {
+      if (item.internal || item.ignoreAfterEnd || item.failed || item.timedOut) continue;
+      if (item.role !== "user" && item.role !== "assistant") continue;
+      if (item.role === "assistant" && item.cancelledByEnd) continue;
+
+      if (this._cleanText(item.finalText)) {
+        if (item.finalSourceRank >= 3 || item.transcriptState === "completed") continue;
+        pending.push(item);
+        continue;
+      }
+
+      if (item.role === "user") {
+        if (["speaking", "speech_stopped", "committed"].includes(item.state)) pending.push(item);
+      } else if (item.role === "assistant") {
+        if (["output_item_added", "output_item_done", "transcript_streaming", "text_streaming", "item_done"].includes(item.state) || item.responseId) {
+          pending.push(item);
+        }
+      }
+    }
+
+    return pending;
+  },
+
+  _getPendingResponseIds() {
+    const pending = [];
+    if (!this._responses) return pending;
+
+    for (const response of this._responses.values()) {
+      if (!response.done && response.status !== "failed" && response.status !== "completed" && response.status !== "cancelled" && response.status !== "incomplete" && !response.timedOut) {
+        pending.push(response.id);
+      }
+    }
+
+    return pending;
+  },
+
+  _markTimedOut(items, responseIds) {
+    for (const item of items) {
+      if (!this._cleanText(item.finalText)) {
+        item.timedOut = true;
+        item.state = "timed_out";
+      }
+    }
+
+    for (const responseId of responseIds) {
+      const response = this._responses.get(responseId);
+      if (response) {
+        response.timedOut = true;
+        response.status = "timed_out";
+      }
+    }
+
+    this._devLog("Transcript finalization timed out", {
+      pending_items: items.map(item => item.id),
+      pending_responses: responseIds
+    });
+  },
+
+  _hasOpenResponses() {
+    return this._getFirstOpenResponseId() !== null;
+  },
+
+  _getFirstOpenResponseId() {
+    if (!this._responses) return null;
+    for (const response of this._responses.values()) {
+      if (!response.done && !response.timedOut) return response.id;
+    }
+    return null;
+  },
+
+  _ensureItem(id, role) {
+    if (!id) return null;
+    if (!this._items) this.resetTranscriptCollector();
+
+    if (!this._items.has(id)) {
+      this._items.set(id, {
+        id,
+        role: role || null,
+        sequence: ++this._itemSequence,
+        previousItemId: undefined,
+        responseId: null,
+        outputIndex: null,
+        state: "created",
+        transcriptState: "pending",
+        finalText: "",
+        finalSource: "",
+        finalSourceRank: 0,
+        emittedText: false,
+        internal: false,
+        failed: false,
+        timedOut: false,
+        cancelledByEnd: false,
+        ignoreAfterEnd: false,
+        startedBeforeEnd: false,
+        retrieveRequested: false,
+        retrieveDone: false,
+        itemDone: false,
+        outputItemDone: false
+      });
+    }
+
+    const item = this._items.get(id);
+    if (role && !item.role) item.role = role;
+    return item;
+  },
+
+  _ensureResponse(id) {
+    if (!this._responses) this.resetTranscriptCollector();
+
+    if (!this._responses.has(id)) {
+      this._responses.set(id, {
+        id,
+        status: "in_progress",
+        done: false,
+        itemIds: [],
+        cancelledByEnd: false,
+        timedOut: false,
+        statusDetails: null
+      });
+    }
+
+    return this._responses.get(id);
+  },
+
+  _registerOpenAIItem(openAIItem, previousItemId, defaults) {
+    if (!openAIItem || !openAIItem.id) return null;
+    const role = openAIItem.role || (defaults && defaults.role) || null;
+    const item = this._ensureItem(openAIItem.id, role);
+
+    this._setPreviousItem(item, previousItemId);
+
+    if (defaults) {
+      item.responseId = defaults.responseId || item.responseId;
+      item.outputIndex = defaults.outputIndex !== undefined ? defaults.outputIndex : item.outputIndex;
+    }
+
+    if (openAIItem.status && openAIItem.status !== "in_progress") item.state = openAIItem.status;
+
+    const text = this._extractItemTranscript(openAIItem);
+    if (text && item.role === "user") this._maybeMarkInternalUserText(item, text);
+
+    return item;
+  },
+
+  _setPreviousItem(item, previousItemId) {
+    if (!item) return;
+    if (previousItemId !== undefined) item.previousItemId = previousItemId || null;
+  },
+
+  _extractItemTranscript(openAIItem) {
+    if (!openAIItem || !Array.isArray(openAIItem.content)) return "";
+    const parts = [];
+
+    for (const part of openAIItem.content) {
+      const text = part.transcript || part.text || "";
+      if (text && text.trim()) parts.push(text.trim());
+    }
+
+    return parts.join(" ").trim();
+  },
+
+  _setFinalText(item, text, source, rank) {
+    if (!item) return false;
+    const clean = this._cleanText(text);
+
+    if (!clean) {
+      if (!item.finalText) item.state = "completed_empty";
+      return false;
+    }
+
+    if (item.role === "assistant" && item.cancelledByEnd && !item.finalText) {
+      item.state = "cancelled";
+      return false;
+    }
+
+    if (item.finalText) {
+      if (item.finalSourceRank > rank) return false;
+      if (item.finalSourceRank === rank && item.finalText.length > clean.length) return false;
+    }
+
+    item.finalText = clean;
+    item.finalSource = source;
+    item.finalSourceRank = rank;
+    item.state = "completed";
+    item.failed = false;
+    item.timedOut = false;
+
+    if (rank >= 3) this._emitCompletedText(item);
+    return true;
+  },
+
+  _emitCompletedText(item) {
+    if (!item || item.emittedText || item.internal || item.ignoreAfterEnd) return;
+    if (!this._cleanText(item.finalText)) return;
+
+    if (item.role === "user") {
+      if (this.onUserText) this.onUserText(item.finalText);
+    } else if (item.role === "assistant") {
+      if (this.onAIText) this.onAIText(item.finalText);
+    }
+
+    item.emittedText = true;
+  },
+
+  _queueInternalUserText(text) {
+    const clean = this._cleanText(text);
+    if (!clean) return;
+    if (!this._internalUserTextQueue) this._internalUserTextQueue = [];
+    this._internalUserTextQueue.push(clean);
+  },
+
+  _maybeMarkInternalUserText(item, text) {
+    if (!item || item.role !== "user" || !this._internalUserTextQueue || this._internalUserTextQueue.length === 0) return;
+    const clean = this._cleanText(text);
+    const nextInternal = this._internalUserTextQueue[0];
+
+    if (clean === nextInternal) {
+      item.internal = true;
+      item.state = "internal";
+      this._internalUserTextQueue.shift();
+    }
+  },
+
+  _emitTranscriptUpdate() {
+    const nextTranscript = this._buildTranscript();
+    const signature = JSON.stringify(nextTranscript);
+    if (signature === this._lastTranscriptSignature) return;
+
+    this._lastTranscriptSignature = signature;
+    this.transcript = nextTranscript;
+    if (this.onTranscriptUpdate) this.onTranscriptUpdate(this.transcript);
+  },
+
+  _buildTranscript() {
+    const ordered = this._getOrderedItems();
+    const transcript = [];
+
+    for (const item of ordered) {
+      if (item.internal || item.ignoreAfterEnd || item.failed) continue;
+      if (item.role !== "user" && item.role !== "assistant") continue;
+      if (item.role === "assistant" && item.cancelledByEnd) continue;
+
+      const content = this._cleanText(item.finalText);
+      if (!content) continue;
+
+      transcript.push({
+        role: item.role,
+        content
+      });
+    }
+
+    return transcript;
+  },
+
+  _getOrderedItems() {
+    if (!this._items) return [];
+    const items = Array.from(this._items.values()).sort((a, b) => a.sequence - b.sequence);
+    const byId = new Map(items.map(item => [item.id, item]));
+    const children = new Map();
+    const roots = [];
+
+    for (const item of items) {
+      if (item.previousItemId && byId.has(item.previousItemId)) {
+        if (!children.has(item.previousItemId)) children.set(item.previousItemId, []);
+        children.get(item.previousItemId).push(item);
+      } else {
+        roots.push(item);
+      }
+    }
+
+    for (const list of children.values()) {
+      list.sort((a, b) => a.sequence - b.sequence);
+    }
+
+    const ordered = [];
+    const visited = new Set();
+
+    const visit = (item) => {
+      if (!item || visited.has(item.id)) return;
+      visited.add(item.id);
+      ordered.push(item);
+      const itemChildren = children.get(item.id) || [];
+      for (const child of itemChildren) visit(child);
+    };
+
+    for (const root of roots) visit(root);
+    for (const item of items) visit(item);
+
+    return ordered;
+  },
+
+  _cleanText(text) {
+    return (text || "").replace(/\s+/g, " ").trim();
   },
 
   // === Avatar lip-sync support ===
@@ -425,7 +1000,7 @@ const RealtimeClient = {
 
   // === Helpers ===
   _setStatus(status) {
-    console.log("[Realtime] Status:", status);
+    this._devLog("Status", { status });
     if (this.onStatusChange) this.onStatusChange(status);
   },
 
@@ -450,9 +1025,13 @@ const RealtimeClient = {
     });
   },
 
-  // Send a text message to trigger AI response (used for initial prompt)
-  sendTextMessage(text) {
+  // Send a text message to trigger AI response (used for initial prompt).
+  // These internal seed prompts are not included in the user's call transcript.
+  sendTextMessage(text, options) {
     if (!this.dc || this.dc.readyState !== "open") return;
+    const opts = options || {};
+    if (opts.record !== true) this._queueInternalUserText(text);
+
     this.dc.send(JSON.stringify({
       type: "conversation.item.create",
       item: {
@@ -470,41 +1049,62 @@ const RealtimeClient = {
     this.dc.send(JSON.stringify({ type: "response.create" }));
   },
 
-  // Enable transcription AND text output after connection is established.
-  // We cannot put these in the initial session config because they cause 504s
-  // on the /v1/realtime/calls endpoint. Sending session.update after the data
-  // channel opens works reliably.
-  enableTranscription() {
-    if (!this.dc || this.dc.readyState !== "open") return;
-    try {
-      // Enable user speech transcription (input side).
-      // The GA API requires type: "realtime" in the session object for session.update.
-      this.dc.send(JSON.stringify({
-        type: "session.update",
-        session: {
-          type: "realtime",
-          input_audio_transcription: {
-            model: "whisper-1"
-          }
-        }
-      }));
-      console.log("[Realtime] Input transcription enabled via session.update");
-    } catch (e) {
-      console.warn("[Realtime] Failed to enable transcription:", e.message);
-    }
+  _diag(data, state, itemOverride) {
+    if (!this._isDevDiagnosticsEnabled()) return;
+    const item = itemOverride || (data && data.item_id ? this._items && this._items.get(data.item_id) : null);
+    console.log("[Realtime][Transcript]", {
+      event: data ? data.type : null,
+      item_id: data ? data.item_id || (data.item && data.item.id) || (item && item.id) || null : null,
+      response_id: data ? data.response_id || (data.response && data.response.id) || (item && item.responseId) || null : null,
+      role: item ? item.role : data && data.item ? data.item.role || null : null,
+      state: state || (item ? item.state : null),
+      transcript_state: item ? item.transcriptState : null,
+      completed: item ? item.state === "completed" : false,
+      failed: item ? !!item.failed : false,
+      timed_out: item ? !!item.timedOut : false,
+      cancelled: item ? !!item.cancelledByEnd : false
+    });
   },
 
-  // Request full conversation history before disconnecting.
-  // Uses conversation.item.list (the GA API method) as a fallback to capture
-  // any transcript items we may have missed during the live session.
-  requestConversationHistory() {
-    if (!this.dc || this.dc.readyState !== "open") return;
+  _devLog(message, data) {
+    if (!this._isDevDiagnosticsEnabled()) return;
+    if (data !== undefined) console.log("[Realtime] " + message + ":", data);
+    else console.log("[Realtime] " + message);
+  },
+
+  _isDevDiagnosticsEnabled() {
     try {
-      this.dc.send(JSON.stringify({ type: "conversation.item.list" }));
-      console.log("[Realtime] Requested conversation item list");
-    } catch (e) {
-      console.warn("[Realtime] Failed to request item list:", e.message);
-    }
+      if (typeof window !== "undefined" && window.localStorage && window.localStorage.getItem("mpg_realtime_debug") === "true") return true;
+    } catch (e) {}
+
+    try {
+      if (typeof window !== "undefined" && window.location) {
+        const hostname = window.location.hostname;
+        return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "[::1]";
+      }
+    } catch (e) {}
+
+    return false;
+  },
+
+  _safeEventSummary(data) {
+    return {
+      type: data && data.type ? data.type : null,
+      event_id: data && data.event_id ? data.event_id : null,
+      item_id: data && data.item_id ? data.item_id : data && data.item ? data.item.id || null : null,
+      response_id: data && data.response_id ? data.response_id : data && data.response ? data.response.id || null : null,
+      role: data && data.item ? data.item.role || null : null
+    };
+  },
+
+  _safeError(error) {
+    if (!error) return null;
+    return {
+      type: error.type || null,
+      code: error.code || null,
+      param: error.param || null,
+      message: error.message || "Realtime API error"
+    };
   },
 
   // === Cleanup ===
@@ -545,3 +1145,7 @@ const RealtimeClient = {
     this._setStatus("Session ended");
   }
 };
+
+if (typeof module !== "undefined" && module.exports) {
+  module.exports = RealtimeClient;
+}

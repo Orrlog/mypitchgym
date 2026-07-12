@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Log In - MyPitchGym</title>
+  <link rel="icon" type="image/png" href="/assets/mpg-logo.png">
+  <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="auth.css">
+</head>
+<body data-auth-page="login">
+  <main class="auth-shell">
+    <section class="auth-card" aria-labelledby="authTitle">
+      <div class="auth-brand">
+        <a href="/" class="logo-link"><img src="/assets/mpg-logo.png" alt="MyPitchGym"></a>
+        <a href="/" class="auth-home-link">Back to home</a>
+      </div>
+
+      <h1 id="authTitle">Your MyPitchGym account</h1>
+      <p>Log in or create an account with your email and password.</p>
+
+      <div class="auth-switch" aria-label="Choose account action">
+        <button type="button" data-mode-login aria-pressed="true">Log In</button>
+        <button type="button" data-mode-signup aria-pressed="false">Create Account</button>
+      </div>
+
+      <div class="auth-message" data-auth-message role="status" aria-live="polite"></div>
+
+      <form class="auth-form" data-login-form data-login-panel>
+        <div class="auth-field">
+          <label for="loginEmail">Email</label>
+          <input id="loginEmail" name="email" type="email" autocomplete="email" required>
+        </div>
+        <div class="auth-field">
+          <label for="loginPassword">Password</label>
+          <input id="loginPassword" name="password" type="password" autocomplete="current-password" required>
+        </div>
+        <button class="auth-button" type="submit" data-login-submit>Log In</button>
+        <div class="auth-secondary">
+          <a class="auth-link" href="forgot-password.html">Forgot your password?</a>
+        </div>
+      </form>
+
+      <form class="auth-form hidden" data-signup-form data-signup-panel>
+        <div class="auth-field">
+          <label for="signupEmail">Email</label>
+          <input id="signupEmail" name="email" type="email" autocomplete="email" required>
+        </div>
+        <div class="auth-field">
+          <label for="signupPassword">Password</label>
+          <input id="signupPassword" name="password" type="password" autocomplete="new-password" minlength="8" required>
+        </div>
+        <div class="auth-field">
+          <label for="signupPasswordConfirm">Confirm password</label>
+          <input id="signupPasswordConfirm" name="passwordConfirm" type="password" autocomplete="new-password" minlength="8" required>
+        </div>
+        <button class="auth-button" type="submit" data-signup-submit>Create Account</button>
+      </form>
+    </section>
+  </main>
+
+  <script type="module" src="auth-pages.js"></script>
+</body>
+</html>

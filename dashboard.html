@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Member Page - MyPitchGym</title>
+  <link rel="icon" type="image/png" href="/assets/mpg-logo.png">
+  <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="auth.css">
+</head>
+<body data-auth-page="dashboard">
+  <main class="auth-shell">
+    <section class="auth-card" aria-labelledby="dashboardTitle">
+      <div class="auth-brand">
+        <a href="/" class="logo-link"><img src="/assets/mpg-logo.png" alt="MyPitchGym"></a>
+        <a href="/" class="auth-home-link">Home</a>
+      </div>
+
+      <div class="auth-message" data-auth-message role="status" aria-live="polite"></div>
+
+      <div class="hidden" data-dashboard-content>
+        <h1 id="dashboardTitle">Member page</h1>
+        <p>Signed in as <strong data-user-email></strong>.</p>
+
+        <div class="auth-note">
+          This is the first account foundation only. Session history, saved practice details, billing, and account features are coming later. This page uses a frontend login guard and does not yet provide server-side subscription enforcement.
+        </div>
+
+        <div class="dashboard-actions">
+          <a class="auth-button" href="app.html">Start Practice</a>
+          <button class="auth-button" type="button" data-logout>Log Out</button>
+          <a class="auth-link" href="login.html">Switch account</a>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <script type="module" src="auth-pages.js"></script>
+</body>
+</html>
